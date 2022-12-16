@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package seeker.admin.v1;
+
+option go_package = ".gen/go/admin/v1;adminv1";
+
+import "google/protobuf/timestamp.proto";
+
+// AdminAPI provides APIs for configuration and analysis.
+service AdminAPI {
+    // GetClusterConfig returns values associated with a specified cluster config.
+    rpc GetClusterConfig(GetClusterConfigRequest) returns (GetClusterConfigResponse);
+    
+    // ListClusterConfig returns all cluster configs.
+    rpc ListClusterConfig(ListClusterConfigRequest) returns (ListClusterConfigResponse);
+
+    // CreateClusterConfig is used to create a cluster config.
+    rpc CreateClusterConfig(CreateClusterConfigRequest) returns (CreateClusterConfigResponse);
+
+    // UpdateClusterConfig is used to update one or more values associated with a specified cluster config.
+    rpc UpdateClusterConfig(UpdateClusterConfigRequest) returns (UpdateClusterConfigResponse);
+
+    // DeleteClusterConfig is used to delete a cluster config.
+    rpc DeleteClusterConfig(DeleteClusterConfigRequest) returns (DeleteClusterConfigResponse);
+}
+
+message GetClusterConfigRequest {
+    int32 id = 1;
+}
+
+message GetClusterConfigResponse {
+    int32 id = 1;
+    string name = 2;
+	repeated ConfigValues values = 3;
+}
+
+message ListClusterConfigRequest {
+    int32 page_size = 1;
+    bytes next_page_token = 2;
+}
+
+message ListClusterConfigResponse {
+    repeated ClusterConfigEntry entries = 1;
+    bytes next_page_token = 2;
+}
+
+message CreateClusterConfigRequest {
+    string name = 1;
+	repeated ConfigValues values = 2;
+}
+
+message CreateClusterConfigResponse {
+    string id = 1;
+}
+
+message UpdateClusterConfigRequest {
+    int32 id = 1;
+    string name = 2;
+    repeated ConfigValues values = 3;
+}
+
+message UpdateClusterConfigResponse {
+    int32 id = 1;
+}
+
+message DeleteClusterConfigRequest {
+    int32 id = 1;
+}
+
+message DeleteClusterConfigResponse {
+    // None
+}
+
+message ClusterConfigEntry {
+    string id = 1;
+	string name = 2;
+	repeated ConfigValues values = 3;
+    google.protobuf.Timestamp created_at = 4;
+    google.protobuf.Timestamp modified_at = 5;
+}
+
+message ConfigValues {
+	string key = 1;
+	string value = 2;
+}

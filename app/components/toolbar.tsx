@@ -17,7 +17,7 @@ export default function Toolbar({}: ToolbarProps) {
       position="fixed"
       elevation={0}
       sx={{
-        bgcolor: "white",
+        bgcolor: theme.palette.common.white,
         zIndex: theme.zIndex.drawer + 1,
         borderBottomColor: "lightgray",
         borderBottomWidth: 1,
