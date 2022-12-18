@@ -1,0 +1,31 @@
+[package]
+name = "seeker"
+version = "1.0.0-beta"
+edition = "2021"
+publish = true
+authors = ["Kyle Thompson <kyle@seeker.io>"]
+default-run = "seeker-server"
+
+[[bin]]
+name = "seeker-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "seeker-ingester"
+path = "src/bin/ingester.rs"
+
+[dependencies]
+actix-web = "4"
+async_once = "0.2.6"
+async-trait = "0.1.56"
+cdrs-tokio = "6.2.0"
+chrono = { version = "0.4.22", features = ["serde"] }
+clap = { version = "3.2.23", features = ["env", "derive"] }
+env_logger = "0.10.0"
+fern = { version = "0.6.1", features = ["colored"] }
+futures = "0.3"
+lazy_static = "1.4.0"
+log = "0.4"
+serde = { version = "1.0.144", features = ["derive"] }
+thiserror = "1.0.35"
+uuid = { version = "1.1.2", features = [ "v4", "fast-rng", "macro-diagnostics" ] }
