@@ -1,10 +1,10 @@
 use chrono::prelude::*;
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[repr(i32)]
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Kind {
     Unknown,
     Kafka,
@@ -53,9 +53,9 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    pub fn new(kind: Kind, name: String, meta: HashMap<String, String>) -> Self {
+    pub fn new(id: Option<i64>, kind: Kind, name: String, meta: HashMap<String, String>) -> Self {
         Cluster {
-            id: 0,
+            id: id.unwrap_or(0),
             kind,
             name,
             meta,

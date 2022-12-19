@@ -124,10 +124,10 @@ impl ClusterStore for CdrsClusterStore {
     async fn update(&self, c: Cluster) -> result::Result<i64, Error> {
         let stmt = "
 			UPDATE adm.clusters
-			SET meta = ?, modify_timestamp = ?
+			SET name = ?, meta = ?, updated_at = ?
             WHERE kind = ? and id = ?;";
 
-        let values = query_values!(c.meta, c.updated_at, c.kind as i32, c.id);
+        let values = query_values!(c.name, c.meta, c.updated_at, c.kind as i32, c.id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {
