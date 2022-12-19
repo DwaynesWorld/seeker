@@ -3,13 +3,16 @@ name: Service Build & Test
 on:
   push:
     branches: [ "main" ]
-    paths: &paths
+    paths:
       - 'Cargo.lock'
       - 'Cargo.toml'
-      - 'seeker/**'
+      - 'seekr/**'
   pull_request:
     branches: [ "main" ]
-    paths: *paths
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'seekr/**'
 
 env:
   CARGO_TERM_COLOR: always

@@ -31,15 +31,12 @@ pub struct CdrsClusterStore {
     session: CdrsSession,
 
     /// A Distributed Unique ID generator.
-    id_generator: id::Generator,
+    generator: id::Generator,
 }
 
 impl CdrsClusterStore {
-    pub fn new(session: CdrsSession, id_generator: id::Generator) -> Self {
-        Self {
-            session,
-            id_generator,
-        }
+    pub fn new(session: CdrsSession, generator: id::Generator) -> Self {
+        Self { session, generator }
     }
 
     fn parse(&self, result: Result<Frame, Error>) -> Result<Vec<Row>, Error> {
@@ -102,7 +99,7 @@ impl ClusterStore for CdrsClusterStore {
             VALUES (?, ?, ?, ?, ?, ?);";
 
         let mut c = c.clone();
-        c.id = self.id_generator.next_id().unwrap();
+        c.id = self.generator.next_id().unwrap();
 
         let values = query_values!(
             c.id,

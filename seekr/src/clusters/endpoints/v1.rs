@@ -22,7 +22,7 @@ async fn create_cluster(
     request: web::Json<CreateClusterRequest>,
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
-    info!("creating a new cluster");
+    info!("Creating a new cluster");
 
     let cluster = Cluster::new(
         None,
@@ -39,7 +39,7 @@ async fn create_cluster(
 
 #[get("")]
 async fn get_clusters(store: web::Data<Arc<dyn ClusterStore + Send + Sync>>) -> impl Responder {
-    info!("listing all clusters");
+    info!("Listing all clusters");
 
     match store.list(Kind::Kafka).await {
         Ok(clusters) => {
@@ -59,7 +59,7 @@ async fn get_cluster(
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
-    info!("fetching cluster with id {}", id);
+    info!("Fetching cluster with id {}", id);
 
     match store.get(id, Kind::Kafka).await {
         Ok(cluster) => {
@@ -82,7 +82,7 @@ async fn update_cluster(
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
-    info!("updating cluster with id {}", id);
+    info!("Updating cluster with id {}", id);
 
     let cluster = Cluster::new(
         Some(id),
@@ -103,7 +103,7 @@ async fn delete_cluster(
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
-    info!("deleting cluster with id {}", id);
+    info!("Deleting cluster with id {}", id);
 
     match store.remove(id, Kind::Kafka).await {
         Ok(_) => HttpResponse::Ok().finish(),

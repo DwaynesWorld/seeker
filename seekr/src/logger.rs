@@ -63,10 +63,10 @@ pub fn init(verbosity: &Level) {
     });
 
     logger = match verbosity {
-        Level::Warn => logger.level_for("seeker", log::LevelFilter::Warn),
-        Level::Info => logger.level_for("seeker", log::LevelFilter::Info),
-        Level::Debug => logger.level_for("seeker", log::LevelFilter::Debug),
-        _ => logger.level_for("seeker", log::LevelFilter::Trace),
+        Level::Warn => logger.level_for("seekr", log::LevelFilter::Warn),
+        Level::Info => logger.level_for("seekr", log::LevelFilter::Info),
+        Level::Debug => logger.level_for("seekr", log::LevelFilter::Debug),
+        _ => logger.level_for("seekr", log::LevelFilter::Trace),
     };
 
     logger = match verbosity {

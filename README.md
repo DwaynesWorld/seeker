@@ -1,4 +1,4 @@
-# Seeker
+# Seekr
 
 A powerful and flexible user interface for managing Apache Kafka. Handle your day-to-day tasks with ease, find exactly what you're looking for, and fix issues quickly.
 

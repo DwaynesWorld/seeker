@@ -23,9 +23,9 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     // Set the default log level
     logger::init(&config.log);
 
-    // Output seeker banner
+    // Output seekr banner
     info!("{}", BANNER);
-    info!("starting server...");
+    info!("Starting server...");
 
     // Initialize server shared state
     // TODO - register worker ID
