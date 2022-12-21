@@ -13,5 +13,16 @@ CREATE TABLE IF NOT EXISTS clusters (
     "meta" map<text, text>,
     "created_at" timestamp,
     "updated_at" timestamp,
-    PRIMARY KEY (kind, id)
+    PRIMARY KEY (id)
+) WITH CLUSTERING ORDER BY (id DESC);
+
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+	"id" bigint,
+    "cluster_id" bigint,
+    "topic_name" text,
+    "meta" map<text, text>,
+    "created_at" timestamp,
+    "updated_at" timestamp,
+    PRIMARY KEY (cluster_id, id)
 ) WITH CLUSTERING ORDER BY (id DESC);

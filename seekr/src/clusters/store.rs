@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::option::Option;
 use std::result;
+use std::sync::Arc;
 use std::vec::Vec;
 
 use async_trait::async_trait;
@@ -18,24 +19,24 @@ use super::cluster::{Cluster, Kind};
 
 #[async_trait]
 pub trait ClusterStore {
-    async fn list(&self, kind: Kind) -> Result<Vec<Cluster>, Error>;
-    async fn get(&self, id: i64, kind: Kind) -> result::Result<Option<Cluster>, Error>;
+    async fn list(&self) -> Result<Vec<Cluster>, Error>;
+    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, Error>;
     async fn insert(&self, entry: Cluster) -> result::Result<i64, Error>;
     async fn update(&self, entry: Cluster) -> result::Result<i64, Error>;
-    async fn remove(&self, id: i64, kind: Kind) -> result::Result<i64, Error>;
+    async fn remove(&self, id: i64) -> result::Result<i64, Error>;
 }
 
 pub struct CdrsClusterStore {
     /// Cassandra session that holds a pool of connections to nodes and provides an interface for
     /// interacting with the cluster.
-    session: CdrsSession,
+    session: Arc<CdrsSession>,
 
     /// A Distributed Unique ID generator.
-    generator: id::Generator,
+    generator: Arc<id::Generator>,
 }
 
 impl CdrsClusterStore {
-    pub fn new(session: CdrsSession, generator: id::Generator) -> Self {
+    pub fn new(session: Arc<CdrsSession>, generator: Arc<id::Generator>) -> Self {
         Self { session, generator }
     }
 
@@ -70,19 +71,18 @@ impl CdrsClusterStore {
 
 #[async_trait]
 impl ClusterStore for CdrsClusterStore {
-    async fn list(&self, kind: Kind) -> Result<Vec<Cluster>, Error> {
-        let stmt = "SELECT * FROM adm.clusters WHERE kind = ? LIMIT 100;";
-        let values = query_values!(kind as i32);
-        let rows = self.session.query_with_values(stmt, values).await;
+    async fn list(&self) -> Result<Vec<Cluster>, Error> {
+        let stmt = "SELECT * FROM adm.clusters LIMIT 100;";
+        let rows = self.session.query(stmt).await;
         let rows = self.parse(rows)?;
-        let clusters = rows.iter().map(|r| self.map(r)).collect::<Vec<Cluster>>();
+        let clusters = rows.iter().map(|r| self.map(r)).collect::<Vec<_>>();
 
         Ok(clusters)
     }
 
-    async fn get(&self, id: i64, kind: Kind) -> result::Result<Option<Cluster>, Error> {
-        let stmt = "SELECT * FROM adm.clusters WHERE kind = ? and id = ?;";
-        let values = query_values!(kind as i32, id);
+    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, Error> {
+        let stmt = "SELECT * FROM adm.clusters WHERE id = ?;";
+        let values = query_values!(id);
         let rows = self.session.query_with_values(stmt, values).await;
         let rows = self.parse(rows)?;
 
@@ -122,9 +122,9 @@ impl ClusterStore for CdrsClusterStore {
         let stmt = "
 			UPDATE adm.clusters
 			SET name = ?, meta = ?, updated_at = ?
-            WHERE kind = ? and id = ?;";
+            WHERE id = ?;";
 
-        let values = query_values!(c.name, c.meta, c.updated_at, c.kind as i32, c.id);
+        let values = query_values!(c.name, c.meta, c.updated_at, c.id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {
@@ -134,9 +134,9 @@ impl ClusterStore for CdrsClusterStore {
         Err(result.unwrap_err())
     }
 
-    async fn remove(&self, id: i64, kind: Kind) -> result::Result<i64, Error> {
-        let stmt = "DELETE FROM adm.clusters WHERE kind = ? and id = ?;";
-        let values = query_values!(kind as i32, id);
+    async fn remove(&self, id: i64) -> result::Result<i64, Error> {
+        let stmt = "DELETE FROM adm.clusters WHERE id = ?;";
+        let values = query_values!(id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {

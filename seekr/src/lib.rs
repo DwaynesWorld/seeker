@@ -11,6 +11,7 @@ pub mod indexer;
 pub mod logger;
 pub mod server;
 pub mod session;
+pub mod subscriptions;
 pub mod version;
 
 pub const BANNER: &str = "

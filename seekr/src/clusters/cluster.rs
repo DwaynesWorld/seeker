@@ -1,6 +1,6 @@
-use chrono::prelude::*;
 use std::collections::HashMap;
 
+use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[repr(i32)]
@@ -45,10 +45,10 @@ pub struct Cluster {
     /// A key/value pair collection of cluster config options.
     pub meta: HashMap<String, String>,
 
-    /// Represents the point in time in UTC Epoch time, when the entry was created.
+    /// Represents the point in time in UTC Epoch time, when the cluster was created.
     pub created_at: DateTime<Utc>,
 
-    /// Represents the point in time in UTC Epoch time, when the entry was modified.
+    /// Represents the point in time in UTC Epoch time, when the cluster was modified.
     pub updated_at: DateTime<Utc>,
 }
 
