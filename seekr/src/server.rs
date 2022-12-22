@@ -7,6 +7,7 @@ use crate::clusters::endpoints::v1::configure as configure_cluster;
 use crate::clusters::store::CdrsClusterStore;
 use crate::clusters::store::ClusterStore;
 use crate::id;
+use crate::kafka::metadata::MetadataService;
 use crate::logger;
 use crate::session::create_session;
 use crate::subscriptions::endpoints::v1::configure as configure_subscription;
@@ -31,7 +32,7 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     info!("Starting server...");
 
     // Initialize server shared state
-    // TODO - register worker ID
+    // TODO: register worker ID
     let id_generator = Arc::new(id::Generator::new(0, 0));
     let session = Arc::new(create_session().await);
 
@@ -42,7 +43,13 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
         CdrsSubscriptionStore::new(session.clone(), id_generator.clone()),
     );
 
-    // Start server
+    // Start Metadata service
+    MetadataService::new(cluster_store.clone())
+        .start()
+        .await
+        .expect("unable to start metadata service.");
+
+    // Start Http server
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())

@@ -5,6 +5,7 @@ use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::clusters::store::ClusterStore;
 use crate::subscriptions::store::SubscriptionStore;
 use crate::subscriptions::subscription::Subscription;
 
@@ -19,9 +20,22 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 #[post("")]
 async fn create_subscription(
     request: web::Json<CreateSubscriptionRequest>,
-    store: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
+    cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     info!("Creating a new subscription");
+
+    let result = cluster_exist(request.cluster_id, cs).await;
+    if result.is_err() {
+        return HttpResponse::InternalServerError().body(result.unwrap_err().to_string());
+    }
+
+    if result.unwrap() == false {
+        return HttpResponse::BadRequest().body(format!(
+            "Cluster with id '{}' not found",
+            request.cluster_id
+        ));
+    }
 
     let subscription = Subscription::new(
         None,
@@ -30,7 +44,7 @@ async fn create_subscription(
         request.metadata.clone(),
     );
 
-    match store.insert(subscription).await {
+    match ss.insert(subscription).await {
         Ok(id) => HttpResponse::Ok().json(CreateSubscriptionResponse { id }),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
@@ -39,7 +53,8 @@ async fn create_subscription(
 #[get("/{cluster_id}")]
 async fn get_subscriptions(
     path: web::Path<i64>,
-    store: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
+    cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     let cluster_id = path.into_inner();
     info!(
@@ -47,7 +62,17 @@ async fn get_subscriptions(
         cluster_id
     );
 
-    match store.list(cluster_id).await {
+    let result = cluster_exist(cluster_id, cs).await;
+    if result.is_err() {
+        return HttpResponse::InternalServerError().body(result.unwrap_err().to_string());
+    }
+
+    if result.unwrap() == false {
+        return HttpResponse::BadRequest()
+            .body(format!("Cluster with id '{}' not found", cluster_id));
+    }
+
+    match ss.list(cluster_id).await {
         Ok(subscriptions) => {
             let subscriptions = subscriptions
                 .iter()
@@ -62,7 +87,8 @@ async fn get_subscriptions(
 #[get("/{cluster_id}/{id}")]
 async fn get_subscription(
     path: web::Path<(i64, i64)>,
-    store: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
+    cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     let (cluster_id, id) = path.into_inner();
     info!(
@@ -70,7 +96,17 @@ async fn get_subscription(
         cluster_id, id
     );
 
-    match store.get(cluster_id, id).await {
+    let result = cluster_exist(cluster_id, cs).await;
+    if result.is_err() {
+        return HttpResponse::InternalServerError().body(result.unwrap_err().to_string());
+    }
+
+    if result.unwrap() == false {
+        return HttpResponse::BadRequest()
+            .body(format!("Cluster with id '{}' not found", cluster_id));
+    }
+
+    match ss.get(cluster_id, id).await {
         Ok(subscription) => {
             let Some(s) = subscription else {
 				return HttpResponse::NotFound().finish();
@@ -88,13 +124,24 @@ async fn get_subscription(
 async fn update_subscription(
     path: web::Path<(i64, i64)>,
     request: web::Json<UpdateSubscriptionRequest>,
-    store: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
+    cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     let (cluster_id, id) = path.into_inner();
     info!(
         "Updating subscription from cluster id {} with id {}",
         cluster_id, id
     );
+
+    let result = cluster_exist(cluster_id, cs).await;
+    if result.is_err() {
+        return HttpResponse::InternalServerError().body(result.unwrap_err().to_string());
+    }
+
+    if result.unwrap() == false {
+        return HttpResponse::BadRequest()
+            .body(format!("Cluster with id '{}' not found", cluster_id));
+    }
 
     let subscription = Subscription::new(
         Some(id),
@@ -103,7 +150,7 @@ async fn update_subscription(
         request.metadata.clone(),
     );
 
-    match store.update(subscription).await {
+    match ss.update(subscription).await {
         Ok(id) => HttpResponse::Ok().json(UpdateSubscriptionResponse { id }),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
@@ -112,7 +159,7 @@ async fn update_subscription(
 #[delete("/{cluster_id}/{id}")]
 async fn delete_subscription(
     path: web::Path<(i64, i64)>,
-    store: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
+    ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     let (cluster_id, id) = path.into_inner();
     info!(
@@ -120,10 +167,18 @@ async fn delete_subscription(
         cluster_id, id
     );
 
-    match store.remove(cluster_id, id).await {
+    match ss.remove(cluster_id, id).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
+}
+
+async fn cluster_exist(
+    cluster_id: i64,
+    cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+) -> Result<bool, cdrs_tokio::error::Error> {
+    let cluster = cs.get(cluster_id).await?;
+    Ok(cluster.is_some())
 }
 
 #[derive(Deserialize)]

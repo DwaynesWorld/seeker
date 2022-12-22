@@ -1,13 +1,17 @@
 #[macro_use]
+extern crate error_chain;
+
+#[macro_use]
 extern crate log;
 
 #[macro_use]
 mod macros;
 
 pub mod clusters;
-pub mod error;
+pub mod errors;
 pub mod id;
 pub mod indexer;
+pub mod kafka;
 pub mod logger;
 pub mod server;
 pub mod session;
