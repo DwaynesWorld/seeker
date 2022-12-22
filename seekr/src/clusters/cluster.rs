@@ -31,6 +31,13 @@ impl TryFrom<i32> for Kind {
     }
 }
 
+pub mod config {
+    pub const BOOTSTRAP_SERVERS: &str = "bootstrap.servers";
+    pub const SEEKR_GROUP_ID: &str = "seekr.group.id";
+    pub const METADATA_POLL_INTERVAL: &str = "metadata.poll.interval.ms";
+    pub const METRICS_POLL_INTERVAL: &str = "metrics.poll.interval.ms";
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
     /// The id of cluster entry.
@@ -43,7 +50,7 @@ pub struct Cluster {
     pub name: String,
 
     /// A key/value pair collection of cluster config options.
-    pub meta: HashMap<String, String>,
+    pub config: HashMap<String, String>,
 
     /// Represents the point in time in UTC Epoch time, when the cluster was created.
     pub created_at: DateTime<Utc>,
@@ -53,12 +60,12 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    pub fn new(id: Option<i64>, kind: Kind, name: String, meta: HashMap<String, String>) -> Self {
+    pub fn new(id: Option<i64>, kind: Kind, name: String, config: HashMap<String, String>) -> Self {
         Cluster {
             id: id.unwrap_or(0),
             kind,
             name,
-            meta,
+            config,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -68,7 +75,7 @@ impl Cluster {
         id: i64,
         kind: Kind,
         name: String,
-        meta: HashMap<String, String>,
+        config: HashMap<String, String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -76,7 +83,7 @@ impl Cluster {
             id,
             kind,
             name,
-            meta,
+            config,
             created_at,
             updated_at,
         }

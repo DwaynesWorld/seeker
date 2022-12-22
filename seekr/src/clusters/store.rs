@@ -57,7 +57,7 @@ impl CdrsClusterStore {
             _ => Kind::Unknown,
         };
 
-        let meta: HashMap<String, String> = match row.r_by_name::<Map>(&"meta") {
+        let config: HashMap<String, String> = match row.r_by_name::<Map>(&"config") {
             Ok(m) => m.as_r_type().unwrap(),
             Err(_) => HashMap::new(),
         };
@@ -65,7 +65,7 @@ impl CdrsClusterStore {
         let created_at = row.r_by_name::<DateTime<Utc>>(&"created_at").unwrap();
         let updated_at = row.r_by_name::<DateTime<Utc>>(&"updated_at").unwrap();
 
-        Cluster::init(id, kind, name, meta, created_at, updated_at)
+        Cluster::init(id, kind, name, config, created_at, updated_at)
     }
 }
 
@@ -95,7 +95,7 @@ impl ClusterStore for CdrsClusterStore {
 
     async fn insert(&self, c: Cluster) -> result::Result<i64, Error> {
         let stmt = "
-            INSERT INTO adm.clusters (id, kind, name, meta, created_at, updated_at)
+            INSERT INTO adm.clusters (id, kind, name, config, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?);";
 
         let mut c = c.clone();
@@ -105,7 +105,7 @@ impl ClusterStore for CdrsClusterStore {
             c.id,
             c.kind as i32,
             c.name,
-            c.meta,
+            c.config,
             c.created_at,
             c.updated_at
         );
@@ -121,10 +121,10 @@ impl ClusterStore for CdrsClusterStore {
     async fn update(&self, c: Cluster) -> result::Result<i64, Error> {
         let stmt = "
 			UPDATE adm.clusters
-			SET name = ?, meta = ?, updated_at = ?
+			SET name = ?, config = ?, updated_at = ?
             WHERE id = ?;";
 
-        let values = query_values!(c.name, c.meta, c.updated_at, c.id);
+        let values = query_values!(c.name, c.config, c.updated_at, c.id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {

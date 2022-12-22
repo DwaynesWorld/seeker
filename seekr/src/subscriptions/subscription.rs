@@ -15,7 +15,7 @@ pub struct Subscription {
     pub topic_name: String,
 
     /// A key/value pair collection of topic config options.
-    pub meta: HashMap<String, String>,
+    pub config: HashMap<String, String>,
 
     /// Represents the point in time in UTC Epoch time, when the subscription was created.
     pub created_at: DateTime<Utc>,
@@ -29,13 +29,13 @@ impl Subscription {
         id: Option<i64>,
         cluster_id: i64,
         topic_name: String,
-        meta: HashMap<String, String>,
+        config: HashMap<String, String>,
     ) -> Self {
         Subscription {
             id: id.unwrap_or(0),
             cluster_id,
             topic_name,
-            meta,
+            config,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -45,7 +45,7 @@ impl Subscription {
         id: i64,
         cluster_id: i64,
         topic_name: String,
-        meta: HashMap<String, String>,
+        config: HashMap<String, String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -53,7 +53,7 @@ impl Subscription {
             id,
             cluster_id,
             topic_name,
-            meta,
+            config,
             created_at,
             updated_at,
         }

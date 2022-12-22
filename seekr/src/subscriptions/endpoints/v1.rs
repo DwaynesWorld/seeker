@@ -19,30 +19,24 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[post("")]
 async fn create_subscription(
-    request: web::Json<CreateSubscriptionRequest>,
+    r: web::Json<CreateSubscriptionRequest>,
     cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
     ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
     info!("Creating a new subscription");
 
-    let result = cluster_exist(request.cluster_id, cs).await;
+    let result = cluster_exist(r.cluster_id, cs).await;
     if result.is_err() {
         return HttpResponse::InternalServerError().body(result.unwrap_err().to_string());
     }
 
     if result.unwrap() == false {
-        return HttpResponse::BadRequest().body(format!(
-            "Cluster with id '{}' not found",
-            request.cluster_id
-        ));
+        return HttpResponse::NotFound()
+            .body(format!("Cluster with id '{}' not found", r.cluster_id));
     }
 
-    let subscription = Subscription::new(
-        None,
-        request.cluster_id,
-        request.topic_name.clone(),
-        request.metadata.clone(),
-    );
+    let subscription =
+        Subscription::new(None, r.cluster_id, r.topic_name.clone(), r.config.clone());
 
     match ss.insert(subscription).await {
         Ok(id) => HttpResponse::Ok().json(CreateSubscriptionResponse { id }),
@@ -68,7 +62,7 @@ async fn get_subscriptions(
     }
 
     if result.unwrap() == false {
-        return HttpResponse::BadRequest()
+        return HttpResponse::NotFound()
             .body(format!("Cluster with id '{}' not found", cluster_id));
     }
 
@@ -102,7 +96,7 @@ async fn get_subscription(
     }
 
     if result.unwrap() == false {
-        return HttpResponse::BadRequest()
+        return HttpResponse::NotFound()
             .body(format!("Cluster with id '{}' not found", cluster_id));
     }
 
@@ -123,7 +117,7 @@ async fn get_subscription(
 #[put("/{cluster_id}/{id}")]
 async fn update_subscription(
     path: web::Path<(i64, i64)>,
-    request: web::Json<UpdateSubscriptionRequest>,
+    r: web::Json<UpdateSubscriptionRequest>,
     cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
     ss: web::Data<Arc<dyn SubscriptionStore + Send + Sync>>,
 ) -> impl Responder {
@@ -139,16 +133,12 @@ async fn update_subscription(
     }
 
     if result.unwrap() == false {
-        return HttpResponse::BadRequest()
+        return HttpResponse::NotFound()
             .body(format!("Cluster with id '{}' not found", cluster_id));
     }
 
-    let subscription = Subscription::new(
-        Some(id),
-        cluster_id,
-        request.topic_name.clone(),
-        request.metadata.clone(),
-    );
+    let subscription =
+        Subscription::new(Some(id), cluster_id, r.topic_name.clone(), r.config.clone());
 
     match ss.update(subscription).await {
         Ok(id) => HttpResponse::Ok().json(UpdateSubscriptionResponse { id }),
@@ -185,7 +175,7 @@ async fn cluster_exist(
 struct CreateSubscriptionRequest {
     cluster_id: i64,
     topic_name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -206,7 +196,7 @@ struct ReadSubscriptionResponse {
 #[derive(Deserialize)]
 struct UpdateSubscriptionRequest {
     topic_name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -219,7 +209,7 @@ struct SubscriptionSummery {
     id: i64,
     cluster_id: i64,
     topic_name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -230,7 +220,7 @@ impl Subscription {
             id: self.id,
             cluster_id: self.cluster_id,
             topic_name: self.topic_name.clone(),
-            metadata: self.meta.clone(),
+            config: self.config.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

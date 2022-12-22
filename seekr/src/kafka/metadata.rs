@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::interval;
 
-use crate::clusters::{cluster::Cluster, store::ClusterStore};
+use crate::clusters::{cluster::config, cluster::Cluster, store::ClusterStore};
 
 /// Timeout for fetching metadata.
 pub const FETCH_METADATA_TIMEOUT_MS: i32 = 60_000;
@@ -25,7 +25,7 @@ pub struct KafkaMetadataConsumer {
 
 impl KafkaMetadataConsumer {
     pub fn create(cluster: &Cluster) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let bootstraps = cluster.meta.get("bootstrap.servers").unwrap();
+        let bootstraps = cluster.config.get(config::BOOTSTRAP_SERVERS).unwrap();
 
         let consumer = ClientConfig::new()
             .set("bootstrap.servers", &bootstraps)
@@ -42,10 +42,9 @@ impl KafkaMetadataConsumer {
 impl MetadataConsumer for KafkaMetadataConsumer {
     async fn fetch_meta(&self) -> Result<ClusterMetadata, Box<dyn Error + Send + Sync>> {
         let inner = self.inner.lock().await;
-
         let metadata = inner.fetch_metadata(None, FETCH_METADATA_TIMEOUT_MS)?;
 
-        let brokers = metadata
+        let mut brokers = metadata
             .brokers()
             .iter()
             .map(|b| BrokerMetadata {
@@ -54,8 +53,9 @@ impl MetadataConsumer for KafkaMetadataConsumer {
                 port: b.port(),
             })
             .collect::<Vec<_>>();
+        brokers.sort_by(|a, b| a.host.cmp(&b.host));
 
-        let topics = metadata
+        let mut topics = metadata
             .topics()
             .iter()
             .map(|t| {
@@ -75,7 +75,6 @@ impl MetadataConsumer for KafkaMetadataConsumer {
                         }
                     })
                     .collect::<Vec<_>>();
-
                 partitions.sort_by(|a, b| a.id.cmp(&b.id));
 
                 TopicMetadata {
@@ -84,8 +83,9 @@ impl MetadataConsumer for KafkaMetadataConsumer {
                 }
             })
             .collect::<Vec<_>>();
+        topics.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let groups = inner
+        let mut groups = inner
             .fetch_group_list(None, FETCH_METADATA_TIMEOUT_MS)?
             .groups()
             .iter()
@@ -106,6 +106,7 @@ impl MetadataConsumer for KafkaMetadataConsumer {
                 }
             })
             .collect::<Vec<_>>();
+        groups.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(ClusterMetadata {
             brokers,
@@ -137,50 +138,64 @@ impl MetadataService {
         }
     }
 
-    pub async fn start(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Acquire lock for startup
-        let mut state = self.state.write().await;
-
+    pub async fn start(self: Arc<Self>) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Fetch all registered clusters from db
         let clusters = self.store.list().await?;
 
         for c in clusters {
-            if state.consumers.contains_key(&c.id) {
-                warn!("Meta consumer is already registered for cluster: {}", c.id);
-                continue;
-            }
-
-            // Create consumer for each cluster
-            let consumer = KafkaMetadataConsumer::create(&c)?;
-            let consumer = Arc::new(consumer);
-
-            // Track consumers
-            state.consumers.insert(c.id, consumer.clone());
-
-            // FIXME: borrowed data escapes outside of associated function
-            // `self` escapes the associated function body here
-            // tokio::spawn(async move { self.poll(c, consumer).await });
+            self.clone().init(c).await?;
         }
 
         Ok(())
     }
 
-    pub async fn register() {
+    pub async fn register(self: Arc<Self>, _cluster: Cluster) {
         todo!()
     }
 
-    pub async fn remove() {
+    pub async fn remove(self: Arc<Self>, _cluster: Cluster) {
         todo!()
     }
 
-    pub async fn poll(&self, cluster: Cluster, consumer: Arc<dyn MetadataConsumer + Send + Sync>) {
+    async fn init(self: Arc<Self>, c: Cluster) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Acquire read lock and check if consumer exist
+        let this = self.clone();
+        let state = this.state.read().await;
+        let exists = state.consumers.contains_key(&c.id);
+        drop(state);
+
+        if exists {
+            warn!("Meta consumer is already registered for cluster: {}", c.id);
+            return Ok(());
+        }
+
+        // Create consumer for each cluster
+        let consumer = KafkaMetadataConsumer::create(&c)?;
+        let consumer = Arc::new(consumer);
+
+        // Acquire write lock and Track consumers
+        let mut state = this.state.write().await;
+        state.consumers.insert(c.id, consumer.clone());
+        drop(state);
+
+        // Poll metadata in the background
+        let this = self.clone();
+        tokio::spawn(async move { this.poll(c, consumer).await });
+        Ok(())
+    }
+
+    async fn poll(
+        self: Arc<Self>,
+        cluster: Cluster,
+        consumer: Arc<dyn MetadataConsumer + Send + Sync>,
+    ) {
         let refresh: u64 = cluster
-            .meta
-            .get("metadata.refresh.seconds")
+            .config
+            .get(config::METADATA_POLL_INTERVAL)
             .unwrap()
             .parse()
             .unwrap();
-        let mut interval = interval(Duration::from_secs(refresh));
+        let mut interval = interval(Duration::from_millis(refresh));
 
         loop {
             tokio::select! {
@@ -209,11 +224,8 @@ pub struct ClusterMetadata {
 
 #[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
 pub struct BrokerMetadata {
-    /// The id of the broker.
     pub id: i32,
-    /// The host name of the broker.
     pub host: String,
-    /// The port of the broker.
     pub port: i32,
 }
 

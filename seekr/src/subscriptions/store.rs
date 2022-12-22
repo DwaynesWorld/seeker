@@ -53,7 +53,7 @@ impl CdrsSubscriptionStore {
         let cluster_id = row.r_by_name::<i64>(&"cluster_id").unwrap();
         let topic_name = row.r_by_name::<String>(&"topic_name").unwrap();
 
-        let meta: HashMap<String, String> = match row.r_by_name::<Map>(&"meta") {
+        let config: HashMap<String, String> = match row.r_by_name::<Map>(&"config") {
             Ok(m) => m.as_r_type().unwrap(),
             Err(_) => HashMap::new(),
         };
@@ -61,7 +61,7 @@ impl CdrsSubscriptionStore {
         let created_at = row.r_by_name::<DateTime<Utc>>(&"created_at").unwrap();
         let updated_at = row.r_by_name::<DateTime<Utc>>(&"updated_at").unwrap();
 
-        Subscription::init(id, cluster_id, topic_name, meta, created_at, updated_at)
+        Subscription::init(id, cluster_id, topic_name, config, created_at, updated_at)
     }
 }
 
@@ -92,7 +92,7 @@ impl SubscriptionStore for CdrsSubscriptionStore {
 
     async fn insert(&self, s: Subscription) -> result::Result<i64, Error> {
         let stmt = "
-            INSERT INTO adm.subscriptions (id, cluster_id, topic_name, meta, created_at, updated_at)
+            INSERT INTO adm.subscriptions (id, cluster_id, topic_name, config, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?);";
 
         let mut s = s.clone();
@@ -102,7 +102,7 @@ impl SubscriptionStore for CdrsSubscriptionStore {
             s.id,
             s.cluster_id,
             s.topic_name,
-            s.meta,
+            s.config,
             s.created_at,
             s.updated_at
         );
@@ -118,10 +118,10 @@ impl SubscriptionStore for CdrsSubscriptionStore {
     async fn update(&self, s: Subscription) -> result::Result<i64, Error> {
         let stmt = "
 			UPDATE adm.subscriptions
-			SET topic_name = ?, meta = ?, updated_at = ?
+			SET topic_name = ?, config = ?, updated_at = ?
             WHERE cluster_id = ? AND id = ?;";
 
-        let values = query_values!(s.topic_name, s.meta, s.updated_at, s.cluster_id, s.id);
+        let values = query_values!(s.topic_name, s.config, s.updated_at, s.cluster_id, s.id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {

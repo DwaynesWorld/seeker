@@ -19,17 +19,12 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[post("")]
 async fn create_cluster(
-    request: web::Json<CreateClusterRequest>,
+    r: web::Json<CreateClusterRequest>,
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     info!("Creating a new cluster");
 
-    let cluster = Cluster::new(
-        None,
-        request.kind.clone(),
-        request.name.clone(),
-        request.metadata.clone(),
-    );
+    let cluster = Cluster::new(None, r.kind.clone(), r.name.clone(), r.config.clone());
 
     match store.insert(cluster).await {
         Ok(id) => HttpResponse::Ok().json(CreateClusterResponse { id }),
@@ -78,18 +73,13 @@ async fn get_cluster(
 #[put("/{id}")]
 async fn update_cluster(
     id: web::Path<i64>,
-    request: web::Json<UpdateClusterRequest>,
+    r: web::Json<UpdateClusterRequest>,
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
     info!("Updating cluster with id {}", id);
 
-    let cluster = Cluster::new(
-        Some(id),
-        request.kind.clone(),
-        request.name.clone(),
-        request.metadata.clone(),
-    );
+    let cluster = Cluster::new(Some(id), r.kind.clone(), r.name.clone(), r.config.clone());
 
     match store.update(cluster).await {
         Ok(id) => HttpResponse::Ok().json(UpdateClusterResponse { id }),
@@ -115,7 +105,7 @@ async fn delete_cluster(
 struct CreateClusterRequest {
     kind: Kind,
     name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -140,7 +130,7 @@ struct ReadClusterResponse {
 struct UpdateClusterRequest {
     kind: Kind,
     name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -153,7 +143,7 @@ struct ClusterSummery {
     id: i64,
     kind: Kind,
     name: String,
-    metadata: HashMap<String, String>,
+    config: HashMap<String, String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -164,7 +154,7 @@ impl Cluster {
             id: self.id,
             kind: self.kind.clone(),
             name: self.name.clone(),
-            metadata: self.meta.clone(),
+            config: self.config.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }

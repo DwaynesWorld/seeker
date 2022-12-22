@@ -44,7 +44,9 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     );
 
     // Start Metadata service
-    MetadataService::new(cluster_store.clone())
+    let metadata_service = Arc::new(MetadataService::new(cluster_store.clone()));
+    metadata_service
+        .clone()
         .start()
         .await
         .expect("unable to start metadata service.");
@@ -56,6 +58,7 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
             .wrap(middleware::Compress::default())
             .app_data(web::Data::new(cluster_store.clone()))
             .app_data(web::Data::new(subscription_store.clone()))
+            .app_data(web::Data::new(metadata_service.clone()))
             .configure(routes)
     })
     .bind((config.host.clone(), config.port.clone()))?

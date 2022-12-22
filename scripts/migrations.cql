@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS clusters (
 	"id" bigint,
     "kind" int,
     "name" text,
-    "meta" map<text, text>,
+    "config" map<text, text>,
     "created_at" timestamp,
     "updated_at" timestamp,
     PRIMARY KEY (id)
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 	"id" bigint,
     "cluster_id" bigint,
     "topic_name" text,
-    "meta" map<text, text>,
+    "config" map<text, text>,
     "created_at" timestamp,
     "updated_at" timestamp,
     PRIMARY KEY (cluster_id, id)
