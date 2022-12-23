@@ -52,20 +52,42 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
         .expect("unable to start metadata service.");
 
     // Start Http server
+    let metadata_service_clone = metadata_service.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
             .app_data(web::Data::new(cluster_store.clone()))
             .app_data(web::Data::new(subscription_store.clone()))
-            .app_data(web::Data::new(metadata_service.clone()))
+            .app_data(web::Data::new(metadata_service_clone.clone()))
             .configure(routes)
     })
     .bind((config.host.clone(), config.port.clone()))?
+    .disable_signals()
     .run();
 
-    info!("Server running at http://{}:{}", config.host, config.port);
-    server.await
+    let server_handle = server.handle();
+    let server_task = tokio::spawn(async move {
+        info!("Server running at http://{}:{}", config.host, config.port);
+        server.await
+    });
+
+    let shutdown_task = tokio::spawn(async move {
+        // Listen for ctrl-c
+        tokio::signal::ctrl_c().await.unwrap();
+        info!("Global shutdown has been initiated...");
+
+        // Start shutdown of tasks
+        metadata_service.stop().await;
+        debug!("Metadata service shutdown completed...");
+
+        server_handle.stop(true).await;
+        debug!("HTTP server shutdown completed...");
+    });
+
+    let _ = tokio::try_join!(server_task, shutdown_task).expect("unable to join tasks");
+
+    Ok(())
 }
 
 fn routes(config: &mut web::ServiceConfig) {

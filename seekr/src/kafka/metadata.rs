@@ -10,9 +10,10 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::interval;
 
 use crate::clusters::{cluster::config, cluster::Cluster, store::ClusterStore};
+use crate::shutdown::Shutdown;
 
 /// Timeout for fetching metadata.
-pub const FETCH_METADATA_TIMEOUT_MS: i32 = 60_000;
+pub const FETCH_METADATA_TIMEOUT_MS: i32 = 15_000;
 
 #[async_trait]
 pub trait MetadataConsumer {
@@ -25,10 +26,24 @@ pub struct KafkaMetadataConsumer {
 
 impl KafkaMetadataConsumer {
     pub fn create(cluster: &Cluster) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let bootstraps = cluster.config.get(config::BOOTSTRAP_SERVERS).unwrap();
+        let bootstraps = cluster
+            .config
+            .get(config::BOOTSTRAP_SERVERS)
+            .unwrap_or(&String::from("localhost:9092"))
+            .to_owned();
+
+        let group_id = cluster
+            .config
+            .get(config::SEEKR_GROUP_ID)
+            .unwrap_or(&String::from("seekr.io"))
+            .to_owned();
+
+        debug!("bootstraps: {}", bootstraps);
+        debug!("group_id: {}", group_id);
 
         let consumer = ClientConfig::new()
             .set("bootstrap.servers", &bootstraps)
+            .set("group.id", &group_id)
             .set("api.version.request", "true")
             .create::<BaseConsumer<EmptyConsumerContext>>()?;
 
@@ -116,20 +131,26 @@ impl MetadataConsumer for KafkaMetadataConsumer {
     }
 }
 
+#[derive(Clone)]
+pub struct ConsumerContext {
+    consumer: Arc<dyn MetadataConsumer + Send + Sync>,
+    sd: Arc<Shutdown>,
+}
+
 pub struct MetadataService {
     store: Arc<dyn ClusterStore + Send + Sync>,
     state: Arc<RwLock<State>>,
 }
 
 struct State {
-    consumers: HashMap<i64, Arc<dyn MetadataConsumer + Send + Sync>>,
+    context: HashMap<i64, ConsumerContext>,
     cache: HashMap<i64, ClusterMetadata>,
 }
 
 impl MetadataService {
     pub fn new(store: Arc<dyn ClusterStore + Send + Sync>) -> Self {
         let state = State {
-            consumers: HashMap::new(),
+            context: HashMap::new(),
             cache: HashMap::new(),
         };
         MetadataService {
@@ -149,6 +170,20 @@ impl MetadataService {
         Ok(())
     }
 
+    pub async fn stop(self: Arc<Self>) {
+        debug!("Metadata service shutdown has been initiated...");
+
+        let state = self.state.read().await;
+        let contexts = state.context.values();
+
+        for c in contexts {
+            c.sd.begin();
+            c.sd.wait_complete().await;
+        }
+
+        debug!("Metadata service shutdown has been completed...");
+    }
+
     pub async fn register(self: Arc<Self>, _cluster: Cluster) {
         todo!()
     }
@@ -158,10 +193,12 @@ impl MetadataService {
     }
 
     async fn init(self: Arc<Self>, c: Cluster) -> Result<(), Box<dyn Error + Send + Sync>> {
+        info!("Initializing metadata consumer for cluster {}...", c.id);
+
         // Acquire read lock and check if consumer exist
         let this = self.clone();
         let state = this.state.read().await;
-        let exists = state.consumers.contains_key(&c.id);
+        let exists = state.context.contains_key(&c.id);
         drop(state);
 
         if exists {
@@ -172,43 +209,50 @@ impl MetadataService {
         // Create consumer for each cluster
         let consumer = KafkaMetadataConsumer::create(&c)?;
         let consumer = Arc::new(consumer);
+        let sd = Arc::new(Shutdown::new());
+        let context = ConsumerContext { consumer, sd };
 
         // Acquire write lock and Track consumers
         let mut state = this.state.write().await;
-        state.consumers.insert(c.id, consumer.clone());
+        state.context.insert(c.id, context.clone());
         drop(state);
 
         // Poll metadata in the background
         let this = self.clone();
-        tokio::spawn(async move { this.poll(c, consumer).await });
+        tokio::spawn(async move { this.poll(c, context).await });
         Ok(())
     }
 
-    async fn poll(
-        self: Arc<Self>,
-        cluster: Cluster,
-        consumer: Arc<dyn MetadataConsumer + Send + Sync>,
-    ) {
+    async fn poll(self: Arc<Self>, cluster: Cluster, context: ConsumerContext) {
         let refresh: u64 = cluster
             .config
             .get(config::METADATA_POLL_INTERVAL)
-            .unwrap()
+            .unwrap_or(&String::from("30000"))
             .parse()
-            .unwrap();
+            .unwrap_or(30_000);
         let mut interval = interval(Duration::from_millis(refresh));
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let result = consumer.fetch_meta().await;
+                    info!("Fetching metadata for cluster {}...", cluster.id);
+                    let result = context.consumer.fetch_meta().await;
                     if result.is_err() {
                         error!("Error: Failed to fetch metadata for cluster {} - {:?}", cluster.id, result.err());
                         continue;
                     }
 
                     let metadata = result.unwrap();
+                    debug!("Metadata: {:?}", metadata);
+
                     let mut state = self.state.write().await;
                     state.cache.insert(cluster.id, metadata);
+                }
+                _ = context.sd.wait_begin() => {
+                    debug!("Metadata service poll shutdown started...");
+                    drop(context.consumer);
+                    context.sd.complete();
+                    break;
                 }
             }
         }

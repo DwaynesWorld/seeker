@@ -2,6 +2,15 @@
 version: "3"
 
 services:
+  cassandra:
+    image: cassandra:4.0
+    ports:
+      - 9042:9042
+    volumes:
+      - ~/apps/cassandra:/var/lib/cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=citizix
+
   zookeeper:
     image: docker.io/bitnami/zookeeper:3.7
     ports:
@@ -10,6 +19,7 @@ services:
       - ALLOW_ANONYMOUS_LOGIN=yes
     volumes:
       - zookeeper_data:/bitnami/zookeeper
+
   kafka-0:
     image: docker.io/bitnami/kafka:3
     ports:
@@ -27,6 +37,7 @@ services:
       - kafka_0_data:/bitnami/kafka
     depends_on:
       - zookeeper
+
   kafka-1:
     image: docker.io/bitnami/kafka:3
     ports:
@@ -44,6 +55,7 @@ services:
       - kafka_1_data:/bitnami/kafka
     depends_on:
       - zookeeper
+
   kafka-2:
     image: docker.io/bitnami/kafka:3
     ports:

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS clusters (
     "created_at" timestamp,
     "updated_at" timestamp,
     PRIMARY KEY (id)
-) WITH CLUSTERING ORDER BY (id DESC);
+);
 
 
 CREATE TABLE IF NOT EXISTS subscriptions (

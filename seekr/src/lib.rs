@@ -15,6 +15,7 @@ pub mod kafka;
 pub mod logger;
 pub mod server;
 pub mod session;
+pub mod shutdown;
 pub mod subscriptions;
 pub mod version;
 
