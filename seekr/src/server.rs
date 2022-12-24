@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use actix_web::middleware::{self};
+use actix_web::web::Data;
 use actix_web::{web, App, HttpServer};
 
 use crate::clusters::endpoints::v1::configure as configure_cluster;
@@ -44,22 +45,24 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     );
 
     // Start Metadata service
-    let metadata_service = Arc::new(MetadataService::new(cluster_store.clone()));
+    let metadata_service = Data::new(MetadataService::new(cluster_store.clone()));
     metadata_service
         .clone()
+        .into_inner()
         .start()
         .await
         .expect("unable to start metadata service.");
 
     // Start Http server
-    let metadata_service_clone = metadata_service.clone();
+
+    let msd = metadata_service.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
-            .app_data(web::Data::new(cluster_store.clone()))
-            .app_data(web::Data::new(subscription_store.clone()))
-            .app_data(web::Data::new(metadata_service_clone.clone()))
+            .app_data(Data::new(cluster_store.clone()))
+            .app_data(Data::new(subscription_store.clone()))
+            .app_data(msd.clone())
             .configure(routes)
     })
     .bind((config.host.clone(), config.port.clone()))?
@@ -78,7 +81,7 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
         info!("Global shutdown has been initiated...");
 
         // Start shutdown of tasks
-        metadata_service.stop().await;
+        metadata_service.clone().into_inner().stop().await;
         debug!("Metadata service shutdown completed...");
 
         server_handle.stop(true).await;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use actix_web::web::{Data, Json};
 use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::clusters::cluster::Cluster;
 use crate::clusters::cluster::Kind;
 use crate::clusters::store::ClusterStore;
+use crate::kafka::metadata::MetadataService;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(create_cluster)
@@ -19,22 +21,27 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 #[post("")]
 async fn create_cluster(
-    r: web::Json<CreateClusterRequest>,
-    store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    r: Json<CreateClusterRequest>,
+    store: Data<Arc<dyn ClusterStore + Send + Sync>>,
+    metadata_service: Data<MetadataService>,
 ) -> impl Responder {
     info!("Creating a new cluster");
 
     let cluster = Cluster::new(None, r.kind.clone(), r.name.clone(), r.config.clone());
+    let metadata_service = metadata_service.into_inner().clone();
 
-    match store.insert(cluster).await {
-        Ok(id) => HttpResponse::Ok().json(CreateClusterResponse { id }),
+    match store.insert(&cluster).await {
+        Ok(id) => {
+            metadata_service.register(Cluster { id, ..cluster }).await;
+            HttpResponse::Ok().json(CreateClusterResponse { id })
+        }
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
 #[get("")]
 async fn get_clusters(store: web::Data<Arc<dyn ClusterStore + Send + Sync>>) -> impl Responder {
-    info!("Listing all clusters");
+    info!("Fetching all clusters");
 
     match store.list().await {
         Ok(clusters) => {
@@ -81,7 +88,7 @@ async fn update_cluster(
 
     let cluster = Cluster::new(Some(id), r.kind.clone(), r.name.clone(), r.config.clone());
 
-    match store.update(cluster).await {
+    match store.update(&cluster).await {
         Ok(id) => HttpResponse::Ok().json(UpdateClusterResponse { id }),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
@@ -91,12 +98,17 @@ async fn update_cluster(
 async fn delete_cluster(
     id: web::Path<i64>,
     store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    metadata_service: Data<MetadataService>,
 ) -> impl Responder {
     let id = id.into_inner();
     info!("Deleting cluster with id {}", id);
+    let metadata_service = metadata_service.into_inner().clone();
 
     match store.remove(id).await {
-        Ok(_) => HttpResponse::Ok().finish(),
+        Ok(_) => {
+            metadata_service.remove(id).await;
+            HttpResponse::Ok().finish()
+        }
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }

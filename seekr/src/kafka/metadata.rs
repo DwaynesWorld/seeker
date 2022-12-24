@@ -184,12 +184,22 @@ impl MetadataService {
         debug!("Metadata service shutdown has been completed...");
     }
 
-    pub async fn register(self: Arc<Self>, _cluster: Cluster) {
-        todo!()
+    pub async fn register(self: Arc<Self>, c: Cluster) {
+        let result = self.init(c).await;
+        if result.is_err() {
+            error!(
+                "Error: registering cluster: {}",
+                result.unwrap_err().source().unwrap()
+            );
+        }
     }
 
-    pub async fn remove(self: Arc<Self>, _cluster: Cluster) {
-        todo!()
+    pub async fn remove(self: Arc<Self>, id: i64) {
+        let mut state = self.state.write().await;
+        let context = state.context.remove(&id);
+        if context.is_some() {
+            context.unwrap().sd.begin();
+        }
     }
 
     async fn init(self: Arc<Self>, c: Cluster) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -235,7 +245,7 @@ impl MetadataService {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    info!("Fetching metadata for cluster {}...", cluster.id);
+                    trace!("Fetching metadata for cluster {}...", cluster.id);
                     let result = context.consumer.fetch_meta().await;
                     if result.is_err() {
                         error!("Error: Failed to fetch metadata for cluster {} - {:?}", cluster.id, result.err());
@@ -243,7 +253,7 @@ impl MetadataService {
                     }
 
                     let metadata = result.unwrap();
-                    debug!("Metadata: {:?}", metadata);
+                    trace!("Metadata: {:?}", metadata);
 
                     let mut state = self.state.write().await;
                     state.cache.insert(cluster.id, metadata);

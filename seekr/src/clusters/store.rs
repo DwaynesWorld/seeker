@@ -21,8 +21,8 @@ use super::cluster::{Cluster, Kind};
 pub trait ClusterStore {
     async fn list(&self) -> Result<Vec<Cluster>, Error>;
     async fn get(&self, id: i64) -> result::Result<Option<Cluster>, Error>;
-    async fn insert(&self, entry: Cluster) -> result::Result<i64, Error>;
-    async fn update(&self, entry: Cluster) -> result::Result<i64, Error>;
+    async fn insert(&self, entry: &Cluster) -> result::Result<i64, Error>;
+    async fn update(&self, entry: &Cluster) -> result::Result<i64, Error>;
     async fn remove(&self, id: i64) -> result::Result<i64, Error>;
 }
 
@@ -93,38 +93,37 @@ impl ClusterStore for CdrsClusterStore {
         Ok(Some(self.map(rows.get(0).unwrap())))
     }
 
-    async fn insert(&self, c: Cluster) -> result::Result<i64, Error> {
+    async fn insert(&self, c: &Cluster) -> result::Result<i64, Error> {
         let stmt = "
             INSERT INTO adm.clusters (id, kind, name, config, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?);";
 
-        let mut c = c.clone();
-        c.id = self.generator.next_id().unwrap();
+        let id = self.generator.next_id().unwrap();
 
         let values = query_values!(
-            c.id,
-            c.kind as i32,
-            c.name,
-            c.config,
+            id,
+            c.kind.clone() as i32,
+            c.name.clone(),
+            c.config.clone(),
             c.created_at,
             c.updated_at
         );
 
         let result = self.session.query_with_values(stmt, values).await;
         if result.is_ok() {
-            return Ok(c.id);
+            return Ok(id);
         }
 
         Err(result.unwrap_err())
     }
 
-    async fn update(&self, c: Cluster) -> result::Result<i64, Error> {
+    async fn update(&self, c: &Cluster) -> result::Result<i64, Error> {
         let stmt = "
 			UPDATE adm.clusters
 			SET name = ?, config = ?, updated_at = ?
             WHERE id = ?;";
 
-        let values = query_values!(c.name, c.config, c.updated_at, c.id);
+        let values = query_values!(c.name.to_owned(), c.config.to_owned(), c.updated_at, c.id);
         let result = self.session.query_with_values(stmt, values).await;
 
         if result.is_ok() {
