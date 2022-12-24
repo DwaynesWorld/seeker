@@ -9,14 +9,15 @@ use serde::{Deserialize, Serialize};
 use crate::clusters::cluster::Cluster;
 use crate::clusters::cluster::Kind;
 use crate::clusters::store::ClusterStore;
-use crate::kafka::metadata::MetadataService;
+use crate::kafka::metadata::service::MetadataService;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(create_cluster)
         .service(get_clusters)
         .service(get_cluster)
         .service(update_cluster)
-        .service(delete_cluster);
+        .service(delete_cluster)
+        .service(get_cluster_metadata);
 }
 
 #[post("")]
@@ -111,6 +112,29 @@ async fn delete_cluster(
         }
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
+}
+
+#[get("/{id}/metadata")]
+async fn get_cluster_metadata(
+    path: web::Path<i64>,
+    metadata_service: Data<MetadataService>,
+) -> impl Responder {
+    let id = path.into_inner();
+    info!("Fetching metadata for cluster with id {}", id);
+
+    let result = metadata_service.into_inner().get(id).await;
+    if result.is_err() {
+        let msg = format!("{}", result.unwrap_err());
+        return HttpResponse::InternalServerError().body(msg);
+    }
+
+    let entry = result.unwrap();
+    if entry.is_none() {
+        return HttpResponse::NotFound()
+            .body(format!("Cluster metadata with id '{}' not found", id));
+    }
+
+    HttpResponse::Ok().json(entry.unwrap())
 }
 
 #[derive(Deserialize)]

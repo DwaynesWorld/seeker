@@ -8,9 +8,9 @@ use crate::clusters::endpoints::v1::configure as configure_cluster;
 use crate::clusters::store::CdrsClusterStore;
 use crate::clusters::store::ClusterStore;
 use crate::id;
-use crate::kafka::metadata::MetadataService;
+use crate::kafka::metadata::service::MetadataService;
 use crate::logger;
-use crate::session::create_session;
+use crate::session::{create_session, CdrsSession};
 use crate::subscriptions::endpoints::v1::configure as configure_subscription;
 use crate::subscriptions::store::CdrsSubscriptionStore;
 use crate::subscriptions::store::SubscriptionStore;
@@ -33,19 +33,13 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     info!("Starting server...");
 
     // Initialize server shared state
-    // TODO: register worker ID
-    let id_generator = Arc::new(id::Generator::new(0, 0));
+    let generator = Arc::new(id::Generator::new(0, 0));
     let session = Arc::new(create_session().await);
-
-    let cluster_store: Arc<dyn ClusterStore + Send + Sync> =
-        Arc::new(CdrsClusterStore::new(session.clone(), id_generator.clone()));
-
-    let subscription_store: Arc<dyn SubscriptionStore + Send + Sync> = Arc::new(
-        CdrsSubscriptionStore::new(session.clone(), id_generator.clone()),
-    );
+    let clusters = init_cluster_store(session.clone(), generator.clone());
+    let subscriptions = init_subscription_store(session.clone(), generator.clone());
+    let metadata_service = Data::new(MetadataService::new(clusters.clone()));
 
     // Start Metadata service
-    let metadata_service = Data::new(MetadataService::new(cluster_store.clone()));
     metadata_service
         .clone()
         .into_inner()
@@ -54,15 +48,14 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
         .expect("unable to start metadata service.");
 
     // Start Http server
-
-    let msd = metadata_service.clone();
+    let metadata_service_ = metadata_service.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
-            .app_data(Data::new(cluster_store.clone()))
-            .app_data(Data::new(subscription_store.clone()))
-            .app_data(msd.clone())
+            .app_data(Data::new(clusters.clone()))
+            .app_data(Data::new(subscriptions.clone()))
+            .app_data(metadata_service_.clone())
             .configure(routes)
     })
     .bind((config.host.clone(), config.port.clone()))?
@@ -96,4 +89,18 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
 fn routes(config: &mut web::ServiceConfig) {
     config.service(web::scope("api/v1/clusters").configure(configure_cluster));
     config.service(web::scope("api/v1/subscriptions").configure(configure_subscription));
+}
+
+fn init_cluster_store(
+    session: Arc<CdrsSession>,
+    generator: Arc<id::Generator>,
+) -> Arc<dyn ClusterStore + Send + Sync> {
+    Arc::new(CdrsClusterStore::new(session, generator))
+}
+
+fn init_subscription_store(
+    session: Arc<CdrsSession>,
+    generator: Arc<id::Generator>,
+) -> Arc<dyn SubscriptionStore + Send + Sync> {
+    Arc::new(CdrsSubscriptionStore::new(session, generator))
 }
