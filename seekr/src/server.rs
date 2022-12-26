@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
-use actix_web::middleware::{self};
+use actix_web::middleware;
 use actix_web::web::Data;
 use actix_web::{web, App, HttpServer};
 
 use crate::clusters::endpoints::v1::configure as configure_cluster;
-use crate::clusters::store::CdrsClusterStore;
 use crate::clusters::store::ClusterStore;
-use crate::id;
+use crate::clusters::store::MSClusterStore;
 use crate::kafka::metadata::service::MetadataService;
 use crate::logger;
-use crate::session::{create_session, CdrsSession};
 use crate::subscriptions::endpoints::v1::configure as configure_subscription;
-use crate::subscriptions::store::CdrsSubscriptionStore;
+use crate::subscriptions::store::MSSubscriptionStore;
 use crate::subscriptions::store::SubscriptionStore;
 use crate::BANNER;
+use crate::{ID_GENERATOR, MS_CLIENT};
 
 pub struct ServerConfig {
     pub log: logger::Level,
@@ -33,10 +32,8 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     info!("Starting server...");
 
     // Initialize server shared state
-    let generator = Arc::new(id::Generator::new(0, 0));
-    let session = Arc::new(create_session().await);
-    let clusters = init_cluster_store(session.clone(), generator.clone());
-    let subscriptions = init_subscription_store(session.clone(), generator.clone());
+    let clusters = init_cluster_store();
+    let subscriptions = init_subscription_store();
     let metadata_service = Data::new(MetadataService::new(clusters.clone()));
 
     // Start Metadata service
@@ -45,7 +42,7 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
         .into_inner()
         .start()
         .await
-        .expect("unable to start metadata service.");
+        .expect("unable to start metadata service");
 
     // Start Http server
     let metadata_service_ = metadata_service.clone();
@@ -91,16 +88,15 @@ fn routes(config: &mut web::ServiceConfig) {
     config.service(web::scope("api/v1/subscriptions").configure(configure_subscription));
 }
 
-fn init_cluster_store(
-    session: Arc<CdrsSession>,
-    generator: Arc<id::Generator>,
-) -> Arc<dyn ClusterStore + Send + Sync> {
-    Arc::new(CdrsClusterStore::new(session, generator))
+fn init_cluster_store() -> Arc<dyn ClusterStore + Send + Sync> {
+    // Arc::new(CdrsClusterStore::new(session, generator))
+    Arc::new(MSClusterStore::new(MS_CLIENT.clone(), ID_GENERATOR.clone()))
 }
 
-fn init_subscription_store(
-    session: Arc<CdrsSession>,
-    generator: Arc<id::Generator>,
-) -> Arc<dyn SubscriptionStore + Send + Sync> {
-    Arc::new(CdrsSubscriptionStore::new(session, generator))
+fn init_subscription_store() -> Arc<dyn SubscriptionStore + Send + Sync> {
+    // Arc::new(CdrsSubscriptionStore::new(session, generator))
+    Arc::new(MSSubscriptionStore::new(
+        MS_CLIENT.clone(),
+        ID_GENERATOR.clone(),
+    ))
 }

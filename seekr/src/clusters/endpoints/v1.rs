@@ -31,7 +31,7 @@ async fn create_cluster(
     let cluster = Cluster::new(None, r.kind.clone(), r.name.clone(), r.config.clone());
     let metadata_service = metadata_service.into_inner().clone();
 
-    match store.insert(&cluster).await {
+    match store.insert(cluster.to_owned()).await {
         Ok(id) => {
             metadata_service.register(Cluster { id, ..cluster }).await;
             HttpResponse::Ok().json(CreateClusterResponse { id })
@@ -89,7 +89,7 @@ async fn update_cluster(
 
     let cluster = Cluster::new(Some(id), r.kind.clone(), r.name.clone(), r.config.clone());
 
-    match store.update(&cluster).await {
+    match store.update(cluster).await {
         Ok(id) => HttpResponse::Ok().json(UpdateClusterResponse { id }),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }

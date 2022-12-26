@@ -1,5 +1,15 @@
+use std::sync::Arc;
+
+use async_once::AsyncOnce;
+use meilisearch_sdk::Client;
+
+use crate::session::CdrsSession;
+
 #[macro_use]
 extern crate error_chain;
+
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 extern crate log;
@@ -39,3 +49,10 @@ pub const RUST_VERS: &str = env!("RUST_VERSION");
 pub const GIT_VERS: &str = env!("GIT_VERSION");
 pub const GIT_BRANCH: &str = env!("GIT_BRANCH");
 pub const GIT_SHA: &str = env!("GIT_SHA");
+
+lazy_static! {
+    static ref SESSION: AsyncOnce<Arc<CdrsSession>> =
+        AsyncOnce::new(async { Arc::new(session::create_session().await) });
+    static ref ID_GENERATOR: Arc<id::Generator> = Arc::new(id::Generator::new(0, 0));
+    static ref MS_CLIENT: Arc<Client> = Arc::new(Client::new("http://localhost:7700", "masterKey"));
+}

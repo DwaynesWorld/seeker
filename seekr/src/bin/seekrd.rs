@@ -12,8 +12,8 @@ use config::{IndexerConfig, ServerConfig};
 pub const LOG: &str = "seekrd";
 
 const INFO: &str = "
-Seekrd is a server-side daemon Seekr.io, which manages
-cluster and subscription data, orchestrates index scheduling.";
+Seekrd is a server-side daemon that manages
+cluster and subscription data, and orchestrates stream indexing.";
 
 #[derive(Debug, Parser)]
 #[clap(name = "Seekrd command-line interface")]

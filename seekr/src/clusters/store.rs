@@ -11,7 +11,9 @@ use cdrs_tokio::query_values;
 use cdrs_tokio::types::prelude::{Map, Row};
 use cdrs_tokio::types::{AsRustType, ByName};
 use chrono::{DateTime, Utc};
+use meilisearch_sdk::Client;
 
+use crate::errors::AnyError;
 use crate::id;
 use crate::session::CdrsSession;
 
@@ -19,11 +21,88 @@ use super::cluster::{Cluster, Kind};
 
 #[async_trait]
 pub trait ClusterStore {
-    async fn list(&self) -> Result<Vec<Cluster>, Error>;
-    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, Error>;
-    async fn insert(&self, entry: &Cluster) -> result::Result<i64, Error>;
-    async fn update(&self, entry: &Cluster) -> result::Result<i64, Error>;
-    async fn remove(&self, id: i64) -> result::Result<i64, Error>;
+    async fn list(&self) -> Result<Vec<Cluster>, AnyError>;
+    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, AnyError>;
+    async fn insert(&self, cluster: Cluster) -> result::Result<i64, AnyError>;
+    async fn update(&self, cluster: Cluster) -> result::Result<i64, AnyError>;
+    async fn remove(&self, id: i64) -> result::Result<i64, AnyError>;
+}
+
+pub const INDEX_NAME: &str = "clusters";
+
+pub struct MSClusterStore {
+    /// Meilisearch client that provides an interface for interacting with the DB.
+    client: Arc<Client>,
+    /// A Distributed Unique ID generator.
+    generator: Arc<id::Generator>,
+}
+
+impl MSClusterStore {
+    pub fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+        Self { client, generator }
+    }
+}
+
+#[async_trait]
+impl ClusterStore for MSClusterStore {
+    async fn list(&self) -> Result<Vec<Cluster>, AnyError> {
+        let docs = self
+            .client
+            .index(INDEX_NAME)
+            .get_documents::<Cluster>()
+            .await?;
+        Ok(docs.results)
+    }
+
+    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, AnyError> {
+        let cluster = self
+            .client
+            .index(INDEX_NAME)
+            .get_document::<Cluster>(&id.to_string())
+            .await?;
+
+        Ok(Some(cluster))
+    }
+
+    async fn insert(&self, c: Cluster) -> result::Result<i64, AnyError> {
+        let cluster = Cluster {
+            id: self.generator.next_id().unwrap(),
+            kind: c.kind,
+            name: c.name,
+            config: c.config,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+        };
+
+        self.client
+            .index(INDEX_NAME)
+            .add_or_replace(&vec![&cluster], Some("id"))
+            .await?
+            .wait_for_completion(&self.client, None, None)
+            .await?;
+
+        Ok(cluster.id)
+    }
+
+    async fn update(&self, c: Cluster) -> result::Result<i64, AnyError> {
+        self.client
+            .index(INDEX_NAME)
+            .add_or_replace(&vec![&c], Some("id"))
+            .await?
+            .wait_for_completion(&self.client, None, None)
+            .await?;
+
+        Ok(c.id)
+    }
+
+    async fn remove(&self, id: i64) -> result::Result<i64, AnyError> {
+        self.client
+            .index(INDEX_NAME)
+            .delete_document(id.to_string())
+            .await?;
+
+        Ok(id)
+    }
 }
 
 pub struct CdrsClusterStore {
@@ -71,21 +150,19 @@ impl CdrsClusterStore {
 
 #[async_trait]
 impl ClusterStore for CdrsClusterStore {
-    async fn list(&self) -> Result<Vec<Cluster>, Error> {
+    async fn list(&self) -> Result<Vec<Cluster>, AnyError> {
         let stmt = "SELECT * FROM adm.clusters LIMIT 100;";
         let rows = self.session.query(stmt).await;
         let rows = self.parse(rows)?;
         let clusters = rows.iter().map(|r| self.map(r)).collect::<Vec<_>>();
-
         Ok(clusters)
     }
 
-    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, Error> {
+    async fn get(&self, id: i64) -> result::Result<Option<Cluster>, AnyError> {
         let stmt = "SELECT * FROM adm.clusters WHERE id = ?;";
         let values = query_values!(id);
         let rows = self.session.query_with_values(stmt, values).await;
         let rows = self.parse(rows)?;
-
         if rows.len() == 0 {
             return Ok(None);
         }
@@ -93,13 +170,12 @@ impl ClusterStore for CdrsClusterStore {
         Ok(Some(self.map(rows.get(0).unwrap())))
     }
 
-    async fn insert(&self, c: &Cluster) -> result::Result<i64, Error> {
+    async fn insert(&self, c: Cluster) -> result::Result<i64, AnyError> {
         let stmt = "
             INSERT INTO adm.clusters (id, kind, name, config, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?);";
 
         let id = self.generator.next_id().unwrap();
-
         let values = query_values!(
             id,
             c.kind.clone() as i32,
@@ -109,39 +185,28 @@ impl ClusterStore for CdrsClusterStore {
             c.updated_at
         );
 
-        let result = self.session.query_with_values(stmt, values).await;
-        if result.is_ok() {
-            return Ok(id);
-        }
+        self.session.query_with_values(stmt, values).await?;
 
-        Err(result.unwrap_err())
+        Ok(id)
     }
 
-    async fn update(&self, c: &Cluster) -> result::Result<i64, Error> {
+    async fn update(&self, c: Cluster) -> result::Result<i64, AnyError> {
         let stmt = "
 			UPDATE adm.clusters
 			SET name = ?, config = ?, updated_at = ?
             WHERE id = ?;";
 
         let values = query_values!(c.name.to_owned(), c.config.to_owned(), c.updated_at, c.id);
-        let result = self.session.query_with_values(stmt, values).await;
+        self.session.query_with_values(stmt, values).await?;
 
-        if result.is_ok() {
-            return Ok(c.id);
-        }
-
-        Err(result.unwrap_err())
+        Ok(c.id)
     }
 
-    async fn remove(&self, id: i64) -> result::Result<i64, Error> {
+    async fn remove(&self, id: i64) -> result::Result<i64, AnyError> {
         let stmt = "DELETE FROM adm.clusters WHERE id = ?;";
         let values = query_values!(id);
-        let result = self.session.query_with_values(stmt, values).await;
+        self.session.query_with_values(stmt, values).await?;
 
-        if result.is_ok() {
-            return Ok(id);
-        }
-
-        Err(result.unwrap_err())
+        Ok(id)
     }
 }

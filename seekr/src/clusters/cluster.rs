@@ -38,7 +38,7 @@ pub mod config {
     pub const METRICS_POLL_INTERVAL: &str = "metrics.poll.interval.ms";
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Cluster {
     /// The id of cluster entry.
     pub id: i64,

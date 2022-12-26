@@ -2,14 +2,29 @@
 version: "3"
 
 services:
-  cassandra:
-    image: cassandra:4.0
+  meilisearch:
+    image: getmeili/meilisearch:v0.30.5
     ports:
-      - 9042:9042
-    volumes:
-      - ~/apps/cassandra:/var/lib/cassandra
+      - "7700:7700"
     environment:
-      - CASSANDRA_CLUSTER_NAME=citizix
+      - http_proxy
+      - https_proxy
+      - MEILI_MASTER_KEY=masterKey
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_ENV=development
+      - MEILI_LOG_LEVEL
+      - MEILI_DB_PATH=/data.ms
+    volumes:
+      - ms_data:/data.ms
+
+#   cassandra:
+#     image: cassandra:4.0
+#     ports:
+#       - 9042:9042
+#     volumes:
+#       - ~/apps/cassandra:/var/lib/cassandra
+#     environment:
+#       - CASSANDRA_CLUSTER_NAME=citizix
 
   zookeeper:
     image: docker.io/bitnami/zookeeper:3.7
@@ -75,6 +90,8 @@ services:
       - zookeeper
 
 volumes:
+  ms_data:
+    driver: local
   zookeeper_data:
     driver: local
   kafka_0_data:

@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::clusters::store::ClusterStore;
+use crate::errors::AnyError;
 use crate::subscriptions::store::SubscriptionStore;
 use crate::subscriptions::subscription::Subscription;
 
@@ -166,7 +167,7 @@ async fn delete_subscription(
 async fn cluster_exist(
     cluster_id: i64,
     cs: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
-) -> Result<bool, cdrs_tokio::error::Error> {
+) -> Result<bool, AnyError> {
     let cluster = cs.get(cluster_id).await?;
     Ok(cluster.is_some())
 }

@@ -16,7 +16,7 @@ use super::ClusterMetadata;
 pub enum CachedMetadataEntry {
     Unknown,
     Processing,
-    Ok(ClusterMetadata),
+    Meta(ClusterMetadata),
     Failed(String),
 }
 
@@ -49,6 +49,8 @@ impl MetadataService {
     }
 
     pub async fn start(self: Arc<Self>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        debug!("Starting Metadata service...");
+
         // Fetch all registered clusters from db
         let clusters = self.store.list().await?;
 
@@ -60,6 +62,7 @@ impl MetadataService {
     }
 
     pub async fn stop(self: Arc<Self>) {
+        debug!("Stopping Metadata service...");
         debug!("Metadata service shutdown has been initiated...");
 
         let state = self.state.read().await;
@@ -74,6 +77,8 @@ impl MetadataService {
     }
 
     pub async fn register(self: Arc<Self>, c: Cluster) {
+        info!("Registering metadata consumer for cluster {}", c.id);
+
         let result = self.init(c).await;
         if result.is_err() {
             error!(
@@ -84,6 +89,8 @@ impl MetadataService {
     }
 
     pub async fn remove(self: Arc<Self>, id: i64) {
+        info!("Removing metadata consumer for cluster {}", id);
+
         let mut state = self.state.write().await;
         let context = state.context.remove(&id);
         if context.is_some() {
@@ -95,7 +102,8 @@ impl MetadataService {
         self: Arc<Self>,
         id: i64,
     ) -> Result<Option<CachedMetadataEntry>, Box<dyn Error + Send + Sync>> {
-        debug!("Fetching metadata for cluster {}", id);
+        info!("Fetching cached metadata for cluster {}", id);
+
         let state = self.state.read().await;
         let meta = state.cache.get(&id);
         Ok(meta.map(|m| m.to_owned()))
@@ -116,8 +124,7 @@ impl MetadataService {
         }
 
         // Create consumer for each cluster
-        let consumer = KafkaMetadataConsumer::create(&c)?;
-        let consumer = Arc::new(consumer);
+        let consumer = Arc::new(KafkaMetadataConsumer::create(&c)?);
         let sd = Arc::new(Shutdown::new());
         let context = ConsumerContext { consumer, sd };
 
@@ -145,7 +152,8 @@ impl MetadataService {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    trace!("Fetching metadata for cluster {}...", cluster.id);
+                    trace!("Polling metadata for cluster {}...", cluster.id);
+
                     let result = context.consumer.fetch_meta().await;
                     if result.is_err() {
                         let msg =  format!("Error: Failed to fetch metadata for cluster {} - {:?}", cluster.id, result.err());
@@ -160,10 +168,11 @@ impl MetadataService {
                     trace!("Metadata: {:?}", metadata);
 
                     let mut state = self.state.write().await;
-                    state.cache.insert(cluster.id, CachedMetadataEntry::Ok(metadata));
+                    state.cache.insert(cluster.id, CachedMetadataEntry::Meta(metadata));
                 }
                 _ = context.sd.wait_begin() => {
                     debug!("Metadata service poll shutdown started...");
+
                     drop(context.consumer);
                     context.sd.complete();
                     break;

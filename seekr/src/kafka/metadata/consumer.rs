@@ -3,6 +3,9 @@ use std::{result::Result, sync::Arc};
 
 use async_trait::async_trait;
 use rdkafka::consumer::{BaseConsumer, Consumer, EmptyConsumerContext};
+use rdkafka::groups::GroupInfo;
+use rdkafka::metadata::{MetadataBroker, MetadataTopic};
+use rdkafka::types::RDKafkaError;
 use rdkafka::ClientConfig;
 use tokio::sync::Mutex;
 
@@ -26,6 +29,8 @@ pub struct KafkaMetadataConsumer {
 
 impl KafkaMetadataConsumer {
     pub fn create(cluster: &Cluster) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        debug!("cluster config: {:?}", cluster.config);
+
         let bootstraps = cluster
             .config
             .get(config::BOOTSTRAP_SERVERS)
@@ -37,9 +42,6 @@ impl KafkaMetadataConsumer {
             .get(config::SEEKR_GROUP_ID)
             .unwrap_or(&String::from("seekr.io"))
             .to_owned();
-
-        debug!("bootstraps: {}", bootstraps);
-        debug!("group_id: {}", group_id);
 
         let consumer = ClientConfig::new()
             .set("bootstrap.servers", &bootstraps)
@@ -62,41 +64,14 @@ impl MetadataConsumer for KafkaMetadataConsumer {
         let mut brokers = metadata
             .brokers()
             .iter()
-            .map(|b| BrokerMetadata {
-                id: b.id(),
-                host: b.host().to_owned(),
-                port: b.port(),
-            })
+            .map(parse_broker)
             .collect::<Vec<_>>();
         brokers.sort_by(|a, b| a.host.cmp(&b.host));
 
         let mut topics = metadata
             .topics()
             .iter()
-            .map(|t| {
-                let mut partitions = t
-                    .partitions()
-                    .iter()
-                    .map(|p| {
-                        let partition_err = p
-                            .error()
-                            .map(|e| rdkafka::types::RDKafkaError::from(e).to_string());
-                        PartitionMetadata {
-                            id: p.id(),
-                            leader: p.leader(),
-                            replicas: p.replicas().to_owned(),
-                            isr: p.isr().to_owned(),
-                            error: partition_err,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                partitions.sort_by(|a, b| a.id.cmp(&b.id));
-
-                TopicMetadata {
-                    name: t.name().to_string(),
-                    partitions,
-                }
-            })
+            .map(parse_topic)
             .collect::<Vec<_>>();
         topics.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -104,22 +79,7 @@ impl MetadataConsumer for KafkaMetadataConsumer {
             .fetch_group_list(None, FETCH_METADATA_TIMEOUT_MS)?
             .groups()
             .iter()
-            .map(|g| {
-                let members = g
-                    .members()
-                    .iter()
-                    .map(|m| GroupMember {
-                        id: m.id().to_owned(),
-                        client_id: m.client_id().to_owned(),
-                        client_host: m.client_host().to_owned(),
-                    })
-                    .collect::<Vec<_>>();
-                GroupMetadata {
-                    name: g.name().to_owned(),
-                    state: g.state().to_owned(),
-                    members,
-                }
-            })
+            .map(parse_group)
             .collect::<Vec<_>>();
         groups.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -128,5 +88,51 @@ impl MetadataConsumer for KafkaMetadataConsumer {
             groups,
             topics,
         })
+    }
+}
+
+fn parse_broker(b: &MetadataBroker) -> BrokerMetadata {
+    BrokerMetadata {
+        id: b.id(),
+        host: b.host().to_owned(),
+        port: b.port(),
+    }
+}
+
+fn parse_topic(t: &MetadataTopic) -> TopicMetadata {
+    let mut partitions = t
+        .partitions()
+        .iter()
+        .map(|p| PartitionMetadata {
+            id: p.id(),
+            leader: p.leader(),
+            replicas: p.replicas().to_owned(),
+            isr: p.isr().to_owned(),
+            error: p.error().map(|e| RDKafkaError::from(e).to_string()),
+        })
+        .collect::<Vec<_>>();
+    partitions.sort_by(|a, b| a.id.cmp(&b.id));
+
+    TopicMetadata {
+        name: t.name().to_string(),
+        partitions,
+    }
+}
+
+fn parse_group(g: &GroupInfo) -> GroupMetadata {
+    let members = g
+        .members()
+        .iter()
+        .map(|m| GroupMember {
+            id: m.id().to_owned(),
+            client_id: m.client_id().to_owned(),
+            client_host: m.client_host().to_owned(),
+        })
+        .collect::<Vec<_>>();
+
+    GroupMetadata {
+        name: g.name().to_owned(),
+        state: g.state().to_owned(),
+        members,
     }
 }

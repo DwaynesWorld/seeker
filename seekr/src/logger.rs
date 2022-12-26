@@ -11,17 +11,6 @@ pub enum Level {
     Trace,
 }
 
-impl Level {
-    // fn to_string(&self) -> String {
-    //     match &self {
-    //         Level::Warn => String::from("warn"),
-    //         Level::Info => String::from("info"),
-    //         Level::Debug => String::from("debug"),
-    //         Level::Trace => String::from("trace"),
-    //     }
-    // }
-}
-
 impl FromStr for Level {
     type Err = &'static str;
 
@@ -74,6 +63,11 @@ pub fn init(verbosity: &Level) {
         Level::Info => logger.level_for("actix_web", log::LevelFilter::Info),
         Level::Debug => logger.level_for("actix_web", log::LevelFilter::Debug),
         _ => logger.level_for("actix_web", log::LevelFilter::Trace),
+    };
+
+    logger = match verbosity {
+        Level::Trace => logger.level_for("isahc::handler", log::LevelFilter::Trace),
+        _ => logger.level_for("isahc::handler", log::LevelFilter::Warn),
     };
 
     logger = match verbosity {

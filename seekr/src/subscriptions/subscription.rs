@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use chrono::prelude::*;
+use serde::{Deserialize, Serialize};
 
 // The subscription for a topic with the given name.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Subscription {
     // Specifies the unique identifier of the subscription.
     pub id: i64,

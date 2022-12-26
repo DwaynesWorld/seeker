@@ -11,7 +11,9 @@ use cdrs_tokio::query_values;
 use cdrs_tokio::types::prelude::{Map, Row};
 use cdrs_tokio::types::{AsRustType, ByName};
 use chrono::{DateTime, Utc};
+use meilisearch_sdk::Client;
 
+use crate::errors::AnyError;
 use crate::id;
 use crate::session::CdrsSession;
 
@@ -19,11 +21,100 @@ use super::subscription::Subscription;
 
 #[async_trait]
 pub trait SubscriptionStore {
-    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, Error>;
-    async fn get(&self, cluster_id: i64, id: i64) -> result::Result<Option<Subscription>, Error>;
-    async fn insert(&self, subscription: Subscription) -> result::Result<i64, Error>;
-    async fn update(&self, subscription: Subscription) -> result::Result<i64, Error>;
-    async fn remove(&self, cluster_id: i64, id: i64) -> result::Result<i64, Error>;
+    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError>;
+    async fn get(&self, cluster_id: i64, id: i64)
+        -> result::Result<Option<Subscription>, AnyError>;
+    async fn insert(&self, subscription: Subscription) -> result::Result<i64, AnyError>;
+    async fn update(&self, subscription: Subscription) -> result::Result<i64, AnyError>;
+    async fn remove(&self, cluster_id: i64, id: i64) -> result::Result<i64, AnyError>;
+}
+
+pub const INDEX_NAME: &str = "subscriptions";
+
+pub struct MSSubscriptionStore {
+    /// Meilisearch client that provides an interface for interacting with the DB.
+    client: Arc<Client>,
+    /// A Distributed Unique ID generator.
+    generator: Arc<id::Generator>,
+}
+
+impl MSSubscriptionStore {
+    pub fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+        Self { client, generator }
+    }
+}
+
+#[async_trait]
+impl SubscriptionStore for MSSubscriptionStore {
+    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError> {
+        let results = self
+            .client
+            .index(INDEX_NAME)
+            .search()
+            .with_filter(&format!("cluster_id = {}", cluster_id))
+            .execute::<Subscription>()
+            .await?;
+        let subs = results
+            .hits
+            .iter()
+            .map(|h| h.result.clone())
+            .collect::<Vec<_>>();
+        Ok(subs)
+    }
+
+    async fn get(
+        &self,
+        _cluster_id: i64,
+        id: i64,
+    ) -> result::Result<Option<Subscription>, AnyError> {
+        let cluster = self
+            .client
+            .index(INDEX_NAME)
+            .get_document::<Subscription>(&id.to_string())
+            .await?;
+
+        Ok(Some(cluster))
+    }
+
+    async fn insert(&self, s: Subscription) -> result::Result<i64, AnyError> {
+        let sub = Subscription {
+            id: self.generator.next_id().unwrap(),
+            cluster_id: s.cluster_id,
+            topic_name: s.topic_name,
+            config: s.config,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+        };
+
+        self.client
+            .index(INDEX_NAME)
+            .add_or_replace(&vec![&sub], Some("id"))
+            .await?
+            .wait_for_completion(&self.client, None, None)
+            .await?;
+
+        Ok(sub.id)
+    }
+
+    async fn update(&self, s: Subscription) -> result::Result<i64, AnyError> {
+        self.client
+            .index(INDEX_NAME)
+            .add_or_replace(&vec![&s], Some("id"))
+            .await?
+            .wait_for_completion(&self.client, None, None)
+            .await?;
+
+        Ok(s.id)
+    }
+
+    async fn remove(&self, _cluster_id: i64, id: i64) -> result::Result<i64, AnyError> {
+        self.client
+            .index(INDEX_NAME)
+            .delete_document(id.to_string())
+            .await?;
+
+        Ok(id)
+    }
 }
 
 pub struct CdrsSubscriptionStore {
@@ -67,7 +158,7 @@ impl CdrsSubscriptionStore {
 
 #[async_trait]
 impl SubscriptionStore for CdrsSubscriptionStore {
-    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, Error> {
+    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError> {
         let stmt = "SELECT * FROM adm.subscriptions WHERE cluster_id = ? LIMIT 100;";
         let values = query_values!(cluster_id);
         let rows = self.session.query_with_values(stmt, values).await;
@@ -77,12 +168,15 @@ impl SubscriptionStore for CdrsSubscriptionStore {
         Ok(subs)
     }
 
-    async fn get(&self, cluster_id: i64, id: i64) -> result::Result<Option<Subscription>, Error> {
+    async fn get(
+        &self,
+        cluster_id: i64,
+        id: i64,
+    ) -> result::Result<Option<Subscription>, AnyError> {
         let stmt = "SELECT * FROM adm.subscriptions WHERE cluster_id = ? AND id = ?;";
         let values = query_values!(cluster_id, id);
         let rows = self.session.query_with_values(stmt, values).await;
         let rows = self.parse(rows)?;
-
         if rows.len() == 0 {
             return Ok(None);
         }
@@ -90,7 +184,7 @@ impl SubscriptionStore for CdrsSubscriptionStore {
         Ok(Some(self.map(rows.get(0).unwrap())))
     }
 
-    async fn insert(&self, s: Subscription) -> result::Result<i64, Error> {
+    async fn insert(&self, s: Subscription) -> result::Result<i64, AnyError> {
         let stmt = "
             INSERT INTO adm.subscriptions (id, cluster_id, topic_name, config, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?);";
@@ -107,39 +201,28 @@ impl SubscriptionStore for CdrsSubscriptionStore {
             s.updated_at
         );
 
-        let result = self.session.query_with_values(stmt, values).await;
-        if result.is_ok() {
-            return Ok(s.id);
-        }
+        self.session.query_with_values(stmt, values).await?;
 
-        Err(result.unwrap_err())
+        Ok(s.id)
     }
 
-    async fn update(&self, s: Subscription) -> result::Result<i64, Error> {
+    async fn update(&self, s: Subscription) -> result::Result<i64, AnyError> {
         let stmt = "
 			UPDATE adm.subscriptions
 			SET topic_name = ?, config = ?, updated_at = ?
             WHERE cluster_id = ? AND id = ?;";
 
         let values = query_values!(s.topic_name, s.config, s.updated_at, s.cluster_id, s.id);
-        let result = self.session.query_with_values(stmt, values).await;
+        self.session.query_with_values(stmt, values).await?;
 
-        if result.is_ok() {
-            return Ok(s.id);
-        }
-
-        Err(result.unwrap_err())
+        Ok(s.id)
     }
 
-    async fn remove(&self, cluster_id: i64, id: i64) -> result::Result<i64, Error> {
+    async fn remove(&self, cluster_id: i64, id: i64) -> result::Result<i64, AnyError> {
         let stmt = "DELETE FROM adm.subscriptions WHERE cluster_id = ? AND id = ?;";
         let values = query_values!(cluster_id, id);
-        let result = self.session.query_with_values(stmt, values).await;
+        self.session.query_with_values(stmt, values).await?;
 
-        if result.is_ok() {
-            return Ok(id);
-        }
-
-        Err(result.unwrap_err())
+        Ok(id)
     }
 }
