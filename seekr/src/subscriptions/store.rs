@@ -11,17 +11,18 @@ use cdrs_tokio::query_values;
 use cdrs_tokio::types::prelude::{Map, Row};
 use cdrs_tokio::types::{AsRustType, ByName};
 use chrono::{DateTime, Utc};
+use meilisearch_sdk::indexes::Index;
 use meilisearch_sdk::Client;
 
 use crate::errors::AnyError;
-use crate::id;
 use crate::session::CdrsSession;
+use crate::{id, ID_GENERATOR, MS_CLIENT};
 
 use super::subscription::Subscription;
 
 #[async_trait]
 pub trait SubscriptionStore {
-    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError>;
+    async fn list(&self, cluster_id: Option<i64>) -> Result<Vec<Subscription>, AnyError>;
     async fn get(&self, cluster_id: i64, id: i64)
         -> result::Result<Option<Subscription>, AnyError>;
     async fn insert(&self, subscription: Subscription) -> result::Result<i64, AnyError>;
@@ -39,26 +40,45 @@ pub struct MSSubscriptionStore {
 }
 
 impl MSSubscriptionStore {
-    pub fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+    pub async fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+        match client.clone().create_index(INDEX_NAME, Some("id")).await {
+            Ok(task) => {
+                task.wait_for_completion(&client, None, None).await.unwrap();
+            }
+            Err(_) => {
+                // Noop
+            }
+        };
+
         Self { client, generator }
+    }
+
+    fn index(&self) -> Index {
+        self.client.index(INDEX_NAME)
     }
 }
 
 #[async_trait]
 impl SubscriptionStore for MSSubscriptionStore {
-    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError> {
+    async fn list(&self, cluster_id: Option<i64>) -> Result<Vec<Subscription>, AnyError> {
+        if cluster_id.is_none() {
+            let subs = self.index().get_documents::<Subscription>().await?;
+            return Ok(subs.results);
+        }
+
         let results = self
-            .client
-            .index(INDEX_NAME)
+            .index()
             .search()
-            .with_filter(&format!("cluster_id = {}", cluster_id))
+            .with_filter(&format!("cluster_id = {}", cluster_id.unwrap()))
             .execute::<Subscription>()
             .await?;
+
         let subs = results
             .hits
             .iter()
             .map(|h| h.result.clone())
             .collect::<Vec<_>>();
+
         Ok(subs)
     }
 
@@ -68,8 +88,7 @@ impl SubscriptionStore for MSSubscriptionStore {
         id: i64,
     ) -> result::Result<Option<Subscription>, AnyError> {
         let cluster = self
-            .client
-            .index(INDEX_NAME)
+            .index()
             .get_document::<Subscription>(&id.to_string())
             .await?;
 
@@ -86,8 +105,7 @@ impl SubscriptionStore for MSSubscriptionStore {
             updated_at: s.updated_at,
         };
 
-        self.client
-            .index(INDEX_NAME)
+        self.index()
             .add_or_replace(&vec![&sub], Some("id"))
             .await?
             .wait_for_completion(&self.client, None, None)
@@ -97,8 +115,7 @@ impl SubscriptionStore for MSSubscriptionStore {
     }
 
     async fn update(&self, s: Subscription) -> result::Result<i64, AnyError> {
-        self.client
-            .index(INDEX_NAME)
+        self.index()
             .add_or_replace(&vec![&s], Some("id"))
             .await?
             .wait_for_completion(&self.client, None, None)
@@ -108,11 +125,7 @@ impl SubscriptionStore for MSSubscriptionStore {
     }
 
     async fn remove(&self, _cluster_id: i64, id: i64) -> result::Result<i64, AnyError> {
-        self.client
-            .index(INDEX_NAME)
-            .delete_document(id.to_string())
-            .await?;
-
+        self.index().delete_document(id.to_string()).await?;
         Ok(id)
     }
 }
@@ -158,9 +171,9 @@ impl CdrsSubscriptionStore {
 
 #[async_trait]
 impl SubscriptionStore for CdrsSubscriptionStore {
-    async fn list(&self, cluster_id: i64) -> Result<Vec<Subscription>, AnyError> {
+    async fn list(&self, cluster_id: Option<i64>) -> Result<Vec<Subscription>, AnyError> {
         let stmt = "SELECT * FROM adm.subscriptions WHERE cluster_id = ? LIMIT 100;";
-        let values = query_values!(cluster_id);
+        let values = query_values!(cluster_id.unwrap());
         let rows = self.session.query_with_values(stmt, values).await;
         let rows = self.parse(rows)?;
         let subs = rows.iter().map(|r| self.map(r)).collect::<Vec<_>>();
@@ -225,4 +238,9 @@ impl SubscriptionStore for CdrsSubscriptionStore {
 
         Ok(id)
     }
+}
+
+pub async fn init_subscription_store() -> Arc<dyn SubscriptionStore + Send + Sync> {
+    // Arc::new(CdrsSubscriptionStore::new(session, generator))
+    Arc::new(MSSubscriptionStore::new(MS_CLIENT.clone(), ID_GENERATOR.clone()).await)
 }

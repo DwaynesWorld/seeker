@@ -1,19 +1,14 @@
-use std::sync::Arc;
-
 use actix_web::middleware;
 use actix_web::web::Data;
 use actix_web::{web, App, HttpServer};
 
 use crate::clusters::endpoints::v1::configure as configure_cluster;
-use crate::clusters::store::ClusterStore;
-use crate::clusters::store::MSClusterStore;
-use crate::kafka::metadata::service::MetadataService;
+use crate::clusters::store::init_cluster_store;
+use crate::kafka::metadata::manager::MetadataManager;
 use crate::logger;
 use crate::subscriptions::endpoints::v1::configure as configure_subscription;
-use crate::subscriptions::store::MSSubscriptionStore;
-use crate::subscriptions::store::SubscriptionStore;
+use crate::subscriptions::store::init_subscription_store;
 use crate::BANNER;
-use crate::{ID_GENERATOR, MS_CLIENT};
 
 pub struct ServerConfig {
     pub log: logger::Level,
@@ -32,9 +27,9 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
     info!("Starting server...");
 
     // Initialize server shared state
-    let clusters = init_cluster_store();
-    let subscriptions = init_subscription_store();
-    let metadata_service = Data::new(MetadataService::new(clusters.clone()));
+    let clusters = init_cluster_store().await;
+    let subscriptions = init_subscription_store().await;
+    let metadata_service = Data::new(MetadataManager::new(clusters.clone()));
 
     // Start Metadata service
     metadata_service
@@ -86,17 +81,4 @@ pub async fn run(config: ServerConfig) -> std::io::Result<()> {
 fn routes(config: &mut web::ServiceConfig) {
     config.service(web::scope("api/v1/clusters").configure(configure_cluster));
     config.service(web::scope("api/v1/subscriptions").configure(configure_subscription));
-}
-
-fn init_cluster_store() -> Arc<dyn ClusterStore + Send + Sync> {
-    // Arc::new(CdrsClusterStore::new(session, generator))
-    Arc::new(MSClusterStore::new(MS_CLIENT.clone(), ID_GENERATOR.clone()))
-}
-
-fn init_subscription_store() -> Arc<dyn SubscriptionStore + Send + Sync> {
-    // Arc::new(CdrsSubscriptionStore::new(session, generator))
-    Arc::new(MSSubscriptionStore::new(
-        MS_CLIENT.clone(),
-        ID_GENERATOR.clone(),
-    ))
 }

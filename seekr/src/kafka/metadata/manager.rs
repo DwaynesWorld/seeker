@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::time::Duration;
 use std::{collections::HashMap, result::Result, sync::Arc};
 
@@ -6,7 +5,9 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 use tokio::time::interval;
 
-use crate::clusters::{cluster::config, cluster::Cluster, store::ClusterStore};
+use crate::clusters::{cluster::Cluster, store::ClusterStore};
+use crate::errors::AnyError;
+use crate::kafka::config;
 use crate::shutdown::Shutdown;
 
 use super::consumer::{KafkaMetadataConsumer, MetadataConsumer};
@@ -26,7 +27,7 @@ pub struct ConsumerContext {
     sd: Arc<Shutdown>,
 }
 
-pub struct MetadataService {
+pub struct MetadataManager {
     store: Arc<dyn ClusterStore + Send + Sync>,
     state: Arc<RwLock<State>>,
 }
@@ -36,23 +37,23 @@ struct State {
     cache: HashMap<i64, CachedMetadataEntry>,
 }
 
-impl MetadataService {
+impl MetadataManager {
     pub fn new(store: Arc<dyn ClusterStore + Send + Sync>) -> Self {
         let state = State {
             context: HashMap::new(),
             cache: HashMap::new(),
         };
-        MetadataService {
+        MetadataManager {
             store,
             state: Arc::new(RwLock::new(state)),
         }
     }
 
-    pub async fn start(self: Arc<Self>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn start(self: Arc<Self>) -> Result<(), AnyError> {
         debug!("Starting Metadata service...");
 
         // Fetch all registered clusters from db
-        let clusters = self.store.list().await?;
+        let clusters = self.store.list(None).await?;
 
         for c in clusters {
             self.clone().init(c).await?;
@@ -62,8 +63,8 @@ impl MetadataService {
     }
 
     pub async fn stop(self: Arc<Self>) {
-        debug!("Stopping Metadata service...");
-        debug!("Metadata service shutdown has been initiated...");
+        debug!("Stopping Metadata manager...");
+        debug!("Metadata manager shutdown has been initiated...");
 
         let state = self.state.read().await;
         let contexts = state.context.values();
@@ -73,7 +74,7 @@ impl MetadataService {
             c.sd.wait_complete().await;
         }
 
-        debug!("Metadata service shutdown has been completed...");
+        debug!("Metadata manager shutdown has been completed...");
     }
 
     pub async fn register(self: Arc<Self>, c: Cluster) {
@@ -98,10 +99,7 @@ impl MetadataService {
         }
     }
 
-    pub async fn get(
-        self: Arc<Self>,
-        id: i64,
-    ) -> Result<Option<CachedMetadataEntry>, Box<dyn Error + Send + Sync>> {
+    pub async fn get(self: Arc<Self>, id: i64) -> Result<Option<CachedMetadataEntry>, AnyError> {
         info!("Fetching cached metadata for cluster {}", id);
 
         let state = self.state.read().await;
@@ -109,12 +107,12 @@ impl MetadataService {
         Ok(meta.map(|m| m.to_owned()))
     }
 
-    async fn init(self: Arc<Self>, c: Cluster) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn init(self: Arc<Self>, c: Cluster) -> Result<(), AnyError> {
         info!("Initializing metadata consumer for cluster {}...", c.id);
 
         // Acquire read lock and check if consumer exist
-        let this = self.clone();
-        let state = this.state.read().await;
+        let manager = self.clone();
+        let state = manager.state.read().await;
         let exists = state.context.contains_key(&c.id);
         drop(state);
 
@@ -123,20 +121,20 @@ impl MetadataService {
             return Ok(());
         }
 
-        // Create consumer for each cluster
+        // Create consumer for cluster
         let consumer = Arc::new(KafkaMetadataConsumer::create(&c)?);
         let sd = Arc::new(Shutdown::new());
         let context = ConsumerContext { consumer, sd };
 
-        // Acquire write lock and Track consumers
-        let mut state = this.state.write().await;
+        // Acquire write lock and track consumers
+        let mut state = manager.state.write().await;
         state.context.insert(c.id, context.clone());
         state.cache.insert(c.id, CachedMetadataEntry::Processing);
         drop(state);
 
-        // Poll metadata in the background
-        let this = self.clone();
-        tokio::spawn(async move { this.poll(c, context).await });
+        // Spawn thread to poll metadata in the background
+        let manager = self.clone();
+        tokio::spawn(async move { manager.poll(c, context).await });
         Ok(())
     }
 
@@ -171,7 +169,7 @@ impl MetadataService {
                     state.cache.insert(cluster.id, CachedMetadataEntry::Meta(metadata));
                 }
                 _ = context.sd.wait_begin() => {
-                    debug!("Metadata service poll shutdown started...");
+                    debug!("Metadata manager poll shutdown started...");
 
                     drop(context.consumer);
                     context.sd.complete();

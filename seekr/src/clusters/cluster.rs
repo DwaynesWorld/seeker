@@ -31,13 +31,6 @@ impl TryFrom<i32> for Kind {
     }
 }
 
-pub mod config {
-    pub const BOOTSTRAP_SERVERS: &str = "bootstrap.servers";
-    pub const SEEKR_GROUP_ID: &str = "seekr.group.id";
-    pub const METADATA_POLL_INTERVAL: &str = "metadata.poll.interval.ms";
-    pub const METRICS_POLL_INTERVAL: &str = "metrics.poll.interval.ms";
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Cluster {
     /// The id of cluster entry.

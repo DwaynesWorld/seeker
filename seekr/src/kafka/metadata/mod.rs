@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod consumer;
-pub mod service;
+pub mod manager;
 
 #[derive(PartialEq, Serialize, Deserialize, Debug, Clone)]
 pub struct ClusterMetadata {

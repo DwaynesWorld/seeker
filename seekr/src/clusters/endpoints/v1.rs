@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use actix_web::web::{Data, Json};
-use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
+use actix_web::web::{Data, Json, Path, ServiceConfig};
+use actix_web::{delete, get, post, put, HttpResponse, Responder};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::clusters::cluster::Cluster;
 use crate::clusters::cluster::Kind;
 use crate::clusters::store::ClusterStore;
-use crate::kafka::metadata::service::MetadataService;
+use crate::kafka::metadata::manager::MetadataManager;
 
-pub fn configure(cfg: &mut web::ServiceConfig) {
+pub fn configure(cfg: &mut ServiceConfig) {
     cfg.service(create_cluster)
         .service(get_clusters)
         .service(get_cluster)
@@ -24,16 +24,16 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 async fn create_cluster(
     r: Json<CreateClusterRequest>,
     store: Data<Arc<dyn ClusterStore + Send + Sync>>,
-    metadata_service: Data<MetadataService>,
+    manager: Data<MetadataManager>,
 ) -> impl Responder {
     info!("Creating a new cluster");
 
     let cluster = Cluster::new(None, r.kind.clone(), r.name.clone(), r.config.clone());
-    let metadata_service = metadata_service.into_inner().clone();
+    let manager = manager.into_inner().clone();
 
     match store.insert(cluster.to_owned()).await {
         Ok(id) => {
-            metadata_service.register(Cluster { id, ..cluster }).await;
+            manager.register(Cluster { id, ..cluster }).await;
             HttpResponse::Ok().json(CreateClusterResponse { id })
         }
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
@@ -41,10 +41,10 @@ async fn create_cluster(
 }
 
 #[get("")]
-async fn get_clusters(store: web::Data<Arc<dyn ClusterStore + Send + Sync>>) -> impl Responder {
+async fn get_clusters(store: Data<Arc<dyn ClusterStore + Send + Sync>>) -> impl Responder {
     info!("Fetching all clusters");
 
-    match store.list().await {
+    match store.list(None).await {
         Ok(clusters) => {
             let clusters = clusters
                 .iter()
@@ -58,8 +58,8 @@ async fn get_clusters(store: web::Data<Arc<dyn ClusterStore + Send + Sync>>) -> 
 
 #[get("/{id}")]
 async fn get_cluster(
-    id: web::Path<i64>,
-    store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    id: Path<i64>,
+    store: Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
     info!("Fetching cluster with id {}", id);
@@ -80,9 +80,9 @@ async fn get_cluster(
 
 #[put("/{id}")]
 async fn update_cluster(
-    id: web::Path<i64>,
-    r: web::Json<UpdateClusterRequest>,
-    store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
+    id: Path<i64>,
+    r: Json<UpdateClusterRequest>,
+    store: Data<Arc<dyn ClusterStore + Send + Sync>>,
 ) -> impl Responder {
     let id = id.into_inner();
     info!("Updating cluster with id {}", id);
@@ -97,17 +97,17 @@ async fn update_cluster(
 
 #[delete("/{id}")]
 async fn delete_cluster(
-    id: web::Path<i64>,
-    store: web::Data<Arc<dyn ClusterStore + Send + Sync>>,
-    metadata_service: Data<MetadataService>,
+    id: Path<i64>,
+    store: Data<Arc<dyn ClusterStore + Send + Sync>>,
+    manager: Data<MetadataManager>,
 ) -> impl Responder {
     let id = id.into_inner();
     info!("Deleting cluster with id {}", id);
-    let metadata_service = metadata_service.into_inner().clone();
+    let manager = manager.into_inner().clone();
 
     match store.remove(id).await {
         Ok(_) => {
-            metadata_service.remove(id).await;
+            manager.remove(id).await;
             HttpResponse::Ok().finish()
         }
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
@@ -115,26 +115,22 @@ async fn delete_cluster(
 }
 
 #[get("/{id}/metadata")]
-async fn get_cluster_metadata(
-    path: web::Path<i64>,
-    metadata_service: Data<MetadataService>,
-) -> impl Responder {
+async fn get_cluster_metadata(path: Path<i64>, manager: Data<MetadataManager>) -> impl Responder {
     let id = path.into_inner();
     info!("Fetching metadata for cluster with id {}", id);
 
-    let result = metadata_service.into_inner().get(id).await;
+    let result = manager.into_inner().get(id).await;
     if result.is_err() {
         let msg = format!("{}", result.unwrap_err());
         return HttpResponse::InternalServerError().body(msg);
     }
 
-    let entry = result.unwrap();
-    if entry.is_none() {
+    let Some(entry) = result.unwrap() else {
         return HttpResponse::NotFound()
             .body(format!("Cluster metadata with id '{}' not found", id));
-    }
+    };
 
-    HttpResponse::Ok().json(entry.unwrap())
+    HttpResponse::Ok().json(entry)
 }
 
 #[derive(Deserialize)]

@@ -11,17 +11,18 @@ use cdrs_tokio::query_values;
 use cdrs_tokio::types::prelude::{Map, Row};
 use cdrs_tokio::types::{AsRustType, ByName};
 use chrono::{DateTime, Utc};
+use meilisearch_sdk::indexes::Index;
 use meilisearch_sdk::Client;
 
 use crate::errors::AnyError;
-use crate::id;
 use crate::session::CdrsSession;
+use crate::{id, ID_GENERATOR, MS_CLIENT};
 
 use super::cluster::{Cluster, Kind};
 
 #[async_trait]
 pub trait ClusterStore {
-    async fn list(&self) -> Result<Vec<Cluster>, AnyError>;
+    async fn list(&self, ids: Option<Vec<i64>>) -> Result<Vec<Cluster>, AnyError>;
     async fn get(&self, id: i64) -> result::Result<Option<Cluster>, AnyError>;
     async fn insert(&self, cluster: Cluster) -> result::Result<i64, AnyError>;
     async fn update(&self, cluster: Cluster) -> result::Result<i64, AnyError>;
@@ -38,26 +39,58 @@ pub struct MSClusterStore {
 }
 
 impl MSClusterStore {
-    pub fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+    pub async fn new(client: Arc<Client>, generator: Arc<id::Generator>) -> Self {
+        match client.clone().create_index(INDEX_NAME, Some("id")).await {
+            Ok(task) => {
+                task.wait_for_completion(&client, None, None).await.unwrap();
+            }
+            Err(_) => {
+                // Noop
+            }
+        };
+
         Self { client, generator }
+    }
+
+    fn index(&self) -> Index {
+        self.client.index(INDEX_NAME)
     }
 }
 
 #[async_trait]
 impl ClusterStore for MSClusterStore {
-    async fn list(&self) -> Result<Vec<Cluster>, AnyError> {
-        let docs = self
-            .client
-            .index(INDEX_NAME)
-            .get_documents::<Cluster>()
+    async fn list(&self, ids: Option<Vec<i64>>) -> Result<Vec<Cluster>, AnyError> {
+        if ids.is_none() {
+            let docs = self.index().get_documents::<Cluster>().await?;
+            return Ok(docs.results);
+        }
+
+        let filter = ids
+            .unwrap()
+            .iter()
+            .map(|&x| format!("id = {}", x))
+            .collect::<Vec<String>>()
+            .join(" or ");
+
+        let results = self
+            .index()
+            .search()
+            .with_filter(&filter)
+            .execute::<Cluster>()
             .await?;
-        Ok(docs.results)
+
+        let clusters = results
+            .hits
+            .iter()
+            .map(|h| h.result.clone())
+            .collect::<Vec<_>>();
+
+        Ok(clusters)
     }
 
     async fn get(&self, id: i64) -> result::Result<Option<Cluster>, AnyError> {
         let cluster = self
-            .client
-            .index(INDEX_NAME)
+            .index()
             .get_document::<Cluster>(&id.to_string())
             .await?;
 
@@ -74,8 +107,7 @@ impl ClusterStore for MSClusterStore {
             updated_at: c.updated_at,
         };
 
-        self.client
-            .index(INDEX_NAME)
+        self.index()
             .add_or_replace(&vec![&cluster], Some("id"))
             .await?
             .wait_for_completion(&self.client, None, None)
@@ -85,8 +117,7 @@ impl ClusterStore for MSClusterStore {
     }
 
     async fn update(&self, c: Cluster) -> result::Result<i64, AnyError> {
-        self.client
-            .index(INDEX_NAME)
+        self.index()
             .add_or_replace(&vec![&c], Some("id"))
             .await?
             .wait_for_completion(&self.client, None, None)
@@ -96,18 +127,15 @@ impl ClusterStore for MSClusterStore {
     }
 
     async fn remove(&self, id: i64) -> result::Result<i64, AnyError> {
-        self.client
-            .index(INDEX_NAME)
-            .delete_document(id.to_string())
-            .await?;
+        self.index().delete_document(id.to_string()).await?;
 
         Ok(id)
     }
 }
 
 pub struct CdrsClusterStore {
-    /// Cassandra session that holds a pool of connections to nodes and provides an interface for
-    /// interacting with the cluster.
+    /// Cassandra session that holds a pool of connections to nodes
+    /// and provides an interface for interacting with the cluster.
     session: Arc<CdrsSession>,
 
     /// A Distributed Unique ID generator.
@@ -150,7 +178,7 @@ impl CdrsClusterStore {
 
 #[async_trait]
 impl ClusterStore for CdrsClusterStore {
-    async fn list(&self) -> Result<Vec<Cluster>, AnyError> {
+    async fn list(&self, ids: Option<Vec<i64>>) -> Result<Vec<Cluster>, AnyError> {
         let stmt = "SELECT * FROM adm.clusters LIMIT 100;";
         let rows = self.session.query(stmt).await;
         let rows = self.parse(rows)?;
@@ -209,4 +237,9 @@ impl ClusterStore for CdrsClusterStore {
 
         Ok(id)
     }
+}
+
+pub async fn init_cluster_store() -> Arc<dyn ClusterStore + Send + Sync> {
+    // Arc::new(CdrsClusterStore::new(session, generator))
+    Arc::new(MSClusterStore::new(MS_CLIENT.clone(), ID_GENERATOR.clone()).await)
 }

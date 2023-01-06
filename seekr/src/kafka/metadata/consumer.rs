@@ -1,34 +1,36 @@
-use std::error::Error;
+use std::time::Duration;
 use std::{result::Result, sync::Arc};
 
 use async_trait::async_trait;
-use rdkafka::consumer::{BaseConsumer, Consumer, EmptyConsumerContext};
+use rdkafka::consumer::{BaseConsumer, Consumer};
+use rdkafka::error::KafkaError;
 use rdkafka::groups::GroupInfo;
 use rdkafka::metadata::{MetadataBroker, MetadataTopic};
-use rdkafka::types::RDKafkaError;
 use rdkafka::ClientConfig;
 use tokio::sync::Mutex;
 
-use crate::clusters::{cluster::config, cluster::Cluster};
+use crate::clusters::cluster::Cluster;
+use crate::errors::AnyError;
+use crate::kafka::config;
 
 use super::{
     BrokerMetadata, ClusterMetadata, GroupMember, GroupMetadata, PartitionMetadata, TopicMetadata,
 };
 
 /// Timeout for fetching metadata.
-pub const FETCH_METADATA_TIMEOUT_MS: i32 = 15_000;
+pub const FETCH_METADATA_TIMEOUT_MS: Duration = Duration::from_millis(15_000);
 
 #[async_trait]
 pub trait MetadataConsumer {
-    async fn fetch_meta(&self) -> Result<ClusterMetadata, Box<dyn Error + Send + Sync>>;
+    async fn fetch_meta(&self) -> Result<ClusterMetadata, AnyError>;
 }
 
 pub struct KafkaMetadataConsumer {
-    pub inner: Arc<Mutex<BaseConsumer<EmptyConsumerContext>>>,
+    pub inner: Arc<Mutex<BaseConsumer>>,
 }
 
 impl KafkaMetadataConsumer {
-    pub fn create(cluster: &Cluster) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn create(cluster: &Cluster) -> Result<Self, AnyError> {
         debug!("cluster config: {:?}", cluster.config);
 
         let bootstraps = cluster
@@ -47,7 +49,7 @@ impl KafkaMetadataConsumer {
             .set("bootstrap.servers", &bootstraps)
             .set("group.id", &group_id)
             .set("api.version.request", "true")
-            .create::<BaseConsumer<EmptyConsumerContext>>()?;
+            .create::<BaseConsumer>()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(consumer)),
@@ -57,7 +59,7 @@ impl KafkaMetadataConsumer {
 
 #[async_trait]
 impl MetadataConsumer for KafkaMetadataConsumer {
-    async fn fetch_meta(&self) -> Result<ClusterMetadata, Box<dyn Error + Send + Sync>> {
+    async fn fetch_meta(&self) -> Result<ClusterMetadata, AnyError> {
         let inner = self.inner.lock().await;
         let metadata = inner.fetch_metadata(None, FETCH_METADATA_TIMEOUT_MS)?;
 
@@ -108,7 +110,9 @@ fn parse_topic(t: &MetadataTopic) -> TopicMetadata {
             leader: p.leader(),
             replicas: p.replicas().to_owned(),
             isr: p.isr().to_owned(),
-            error: p.error().map(|e| RDKafkaError::from(e).to_string()),
+            error: p
+                .error()
+                .map(|e| KafkaError::MetadataFetch(e.into()).to_string()),
         })
         .collect::<Vec<_>>();
     partitions.sort_by(|a, b| a.id.cmp(&b.id));

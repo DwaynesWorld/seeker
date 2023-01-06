@@ -67,7 +67,7 @@ async fn get_subscriptions(
             .body(format!("Cluster with id '{}' not found", cluster_id));
     }
 
-    match ss.list(cluster_id).await {
+    match ss.list(Some(cluster_id)).await {
         Ok(subscriptions) => {
             let subscriptions = subscriptions
                 .iter()
